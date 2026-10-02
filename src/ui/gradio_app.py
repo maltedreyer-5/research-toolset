@@ -2379,6 +2379,8 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
         "type": "literature_check",
         "api_stats": report_data.api_stats,
         "llm_stats": report_data.llm_stats,
+        # Built by the check with the best API match per entry
+        "bibtex": report_data.bibtex,
     }
     app_state.current_research = ctx
 
@@ -2838,13 +2840,11 @@ def export_bibtex(app_state: AppState):
         gr.Warning("BibTeX export is only available for literature checks.")
         return None
     try:
-        from src.pipeline.literature_check import generate_bibtex
-        # Extract entries from search_stats
-        entries = ctx.search_stats.get("entries", [])
-        if not entries:
+        bibtex = (ctx.search_stats or {}).get("bibtex") or ""
+        n_entries = len(re.findall(r"^@\w+\s*\{", bibtex, re.M))
+        if not n_entries:
             gr.Warning("No bibliography entries to export.")
             return None
-        bibtex = generate_bibtex(entries)
         gradio_temp = os.environ.get("GRADIO_TEMP_DIR") or tempfile.gettempdir()
         os.makedirs(gradio_temp, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -2853,7 +2853,7 @@ def export_bibtex(app_state: AppState):
         ) as f:
             f.write(bibtex)
             filepath = f.name
-        gr.Info(f"✅ BibTeX export created ({len(entries)} entries).")
+        gr.Info(f"✅ BibTeX export created ({n_entries} entries).")
         return filepath
     except Exception as e:
         logger.error(f"BibTeX export error: {e}", exc_info=True)

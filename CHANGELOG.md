@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- BibTeX export of a reference check: it looked for entries nothing ever
+  stored and always reported "No bibliography entries to export". It now
+  writes the BibTeX the check builds itself (best API match per entry).
+
 ## [1.0.0] — 2026-09-28
 
 First public release.
@@ -55,4 +63,5 @@ First public release.
 - SSRF protection for every fetched URL, TLS verification on by default,
   binding to `127.0.0.1` by default, Docker image running as an unprivileged user.
 
+[Unreleased]: https://github.com/maltedreyer-5/research-toolset/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/maltedreyer-5/research-toolset/releases/tag/v1.0.0
