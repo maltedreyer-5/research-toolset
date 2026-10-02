@@ -38,7 +38,7 @@ concurrent calls to it.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TLS_VERIFY` | `true` | certificate verification for outgoing HTTPS. Prefer `SSL_CERT_FILE` (path to a CA bundle) for internal certificates over switching verification off |
+| `TLS_VERIFY` | `true` | certificate verification for the internal services you run yourself: embedder, reranker, person directory, Solr. Connections to public endpoints (web search, fetched pages, literature APIs, LLM) are always verified. Prefer `SSL_CERT_FILE` (path to a CA bundle) for internal certificates over switching verification off |
 | `FETCH_ALLOWED_INTERNAL_HOSTS` | *(empty)* | comma-separated hosts that may be fetched although they resolve to private addresses (the SSRF protection refuses private, loopback and link-local targets otherwise) |
 | `FETCH_TIMEOUT` | `30` | seconds per fetched page |
 | `CONTACT_EMAIL` | — | sent in the User-Agent to Crossref and OpenAlex (polite pool) |

@@ -1,0 +1,9 @@
+# Keep LF line endings in the repository and in checkouts on every platform,
+# so that files copied from it (e.g. .env from .env.example) and files used in
+# Linux containers (Dockerfile, settings.yml) behave the same on Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.docx binary
+*.pdf binary
+*.zip binary

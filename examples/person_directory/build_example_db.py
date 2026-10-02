@@ -45,7 +45,7 @@ def build(path: str) -> None:
     if p.exists():
         p.unlink()
     conn = sqlite3.connect(p)
-    conn.executescript((HERE / "schema.sql").read_text())
+    conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
     for pid, given, family, title, status, email, consent in PERSONS:
         conn.execute(
             "INSERT INTO persons (pid, given_name, family_name, academic_title, status, "

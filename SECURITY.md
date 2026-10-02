@@ -30,8 +30,10 @@ service.
   non-HTTP schemes. The check runs again after DNS resolution and on every
   redirect (an httpx request hook). Internal hosts that must be reachable are
   allowed explicitly with `FETCH_ALLOWED_INTERNAL_HOSTS`.
-- Outgoing TLS certificates are verified by default (`TLS_VERIFY=true`); use
-  `SSL_CERT_FILE` for internal CAs.
+- Outgoing TLS certificates are verified. For internal services with
+  certificates from an internal CA, use `SSL_CERT_FILE`; `TLS_VERIFY=false`
+  switches verification off for those internal services only (embedder,
+  reranker, person directory, Solr), never for public endpoints.
 - The GitHub token is only sent to the GitHub API, not with raw file fetches.
 
 **Interface**

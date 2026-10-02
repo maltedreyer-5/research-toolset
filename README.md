@@ -104,6 +104,7 @@ vulnerabilities.
 - [Configuration](docs/configuration.md) — environment variables
 - [Output languages](docs/output-languages.md) — catalogs, adding a language
 - [Institution mode](docs/institution-mode.md) — profile, person directory
+- [Connectors](docs/connectors.md) — connecting further data sources
 - [Deployment](docs/deployment.md) — Docker, reverse proxy, TLS, data retention
 
 ## Limitations

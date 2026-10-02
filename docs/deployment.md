@@ -22,6 +22,25 @@ Office formats (`.doc`, `.ppt`, `.xls`) and `playwright` for rendering
 JavaScript-heavy pages (`USE_PLAYWRIGHT=true`, then
 `playwright install chromium`).
 
+## Windows
+
+The tool runs natively on Windows with Python 3.12: all dependencies are
+available as Windows packages. In PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env    # edit
+python app.py
+```
+
+For Docker on Windows use Docker Desktop with the WSL 2 backend (Linux
+containers); the commands below are the same. Keep `.env` with LF line
+endings — the repository's `.gitattributes` does this for files you check out;
+an editor that saves new files with Windows line endings can add a trailing
+character to every value in `--env-file`.
+
 ## Docker
 
 ```bash
