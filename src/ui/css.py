@@ -457,11 +457,24 @@ body:not([data-options-open]) #options-panel {
 }
 
 /* invisible buttons that must stay in the DOM (for JS triggers) */
-.hidden-btn {
+/* Trigger buttons clicked from JavaScript only (chat actions). They must
+   never take up room or catch a mouse click: other button rules (height,
+   padding, min sizes) would otherwise make them a transparent area over
+   neighbouring controls. A programmatic .click() still works with
+   pointer-events: none. */
+.hidden-btn,
+.hidden-btn button {
     position: absolute !important;
     width: 1px !important;
     height: 1px !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
     overflow: hidden !important;
     opacity: 0 !important;
+    pointer-events: none !important;
+    clip-path: inset(50%) !important;
 }
 """
