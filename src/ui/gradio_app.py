@@ -4,6 +4,8 @@ Three-column layout: sidebar | chat + input | result panel
 """
 
 import asyncio
+import copy
+import json
 import logging
 import os
 import re
@@ -121,6 +123,13 @@ class AppState:
     # built, they must be persisted here.
     pending_institution_only: bool = False
     pending_academic_only: bool = False
+    # Copy of the last result in the browser (see save_result_to_browser).
+    # The research object that copy belongs to — saved, restored or
+    # discarded by "New chat" — so that every result is written once.
+    browser_result_ctx: Optional[HarvestContext] = None
+    # The stored texts when current_research was restored from the browser
+    # (pipeline-run view, appendices for the Word export).
+    restored_result: Optional[dict] = None
     # UI
     sidebar_visible: bool = False
     result_panel_visible: bool = False
@@ -2462,6 +2471,343 @@ def new_chat(app_state: AppState):
     return app_state, [_welcome_message()]
 
 
+# ─── Chat history in the browser (survives a page reload) ─────────
+#
+# The chat lives in gr.State, which is bound to one page load. A copy is
+# kept in the browser's localStorage via gr.BrowserState: written at the
+# end of every handler chain that changes the chat (not per streamed
+# chunk), read back on page load. It stays in this one browser; other
+# devices and other people do not see it.
+#
+# Opt-in: only with BROWSER_STORAGE_SECRET set. Without it nothing is
+# stored and the app behaves as before — the safe default on shared
+# computers, and no data encrypted with a random per-start key that a
+# restart would make unreadable.
+
+CHAT_STORAGE_KEY = "research-toolset-chat"
+#: Upper bounds so that localStorage (about 5 MB per origin) never fills up.
+CHAT_STORE_MAX_MESSAGES = 200
+CHAT_STORE_MAX_HISTORY = 60
+
+_WELCOME_PREFIXES = ("👋 Welcome",)
+
+
+def _browser_storage_secret() -> Optional[str]:
+    """Encryption secret for chat and result in the browser (None = off)."""
+    return os.environ.get("BROWSER_STORAGE_SECRET", "").strip() or None
+
+
+def browser_storage_enabled() -> bool:
+    return _browser_storage_secret() is not None
+
+
+def _message_text(content) -> str:
+    """Flatten chatbot message content (str or list of parts) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        return str(content.get("text") or content.get("content") or "")
+    if isinstance(content, (list, tuple)):
+        return "\n".join(_message_text(p) for p in content if p)
+    return ""
+
+
+def _is_transient(text: str) -> bool:
+    """Welcome message and thinking placeholder are not worth storing."""
+    t = text.strip()
+    return not t or t == THINKING_PLACEHOLDER or t.startswith(_WELCOME_PREFIXES)
+
+
+def save_chat_to_browser(chatbot: list, app_state: AppState):
+    """Snapshot of the chat for gr.BrowserState (JSON only)."""
+    if not browser_storage_enabled():
+        return gr.skip()
+    messages = []
+    for m in chatbot or []:
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+            continue
+        text = _message_text(m.get("content"))
+        if _is_transient(text):
+            continue
+        messages.append({"role": m["role"], "content": text})
+    history = []
+    for m in getattr(app_state, "chat_history", None) or []:
+        text = _message_text(m.get("content"))
+        if m.get("role") in ("user", "assistant") and text.strip():
+            history.append({"role": m["role"], "content": text})
+    return {
+        "version": 1,
+        "chatbot": messages[-CHAT_STORE_MAX_MESSAGES:],
+        "history": history[-CHAT_STORE_MAX_HISTORY:],
+    }
+
+
+def restore_chat_from_browser(stored, app_state: AppState):
+    """Rebuild chat display and LLM context from the stored snapshot."""
+    app_state = _get_ready_state(app_state)
+    chatbot = [_welcome_message()]
+    if isinstance(stored, dict) and stored.get("version") == 1:
+        for m in stored.get("chatbot") or []:
+            if (isinstance(m, dict) and m.get("role") in ("user", "assistant")
+                    and isinstance(m.get("content"), str)):
+                chatbot.append({"role": m["role"], "content": m["content"]})
+        app_state.chat_history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in stored.get("history") or []
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+            and isinstance(m.get("content"), str)
+        ]
+    return app_state, chatbot
+
+
+# ─── Last result in the browser (survives a page reload) ──────────
+#
+# Same mechanism and secret as the chat, own storage key. Only the last
+# result is kept, as finished text: the tabs as they were shown, the
+# pipeline-run view, the report as exported and the BibTeX of a reference
+# check. The research object itself (sources, extracts, statistics) is
+# not stored; a restored result gets a minimal HarvestContext that is
+# enough for the exports (the Word metadata appendices are then empty).
+
+RESULT_STORAGE_KEY = "research-toolset-result"
+#: Upper bound for the stored result (UTF-8 bytes of its JSON).
+RESULT_STORE_MAX_BYTES = 250_000
+#: Shortened first when the result is too big; the report comes last.
+_RESULT_TRIM_ORDER = ("pipeline_run", "extracts", "progress", "sources",
+                      "bibtex", "report", "export_md")
+_RESULT_TEXT_FIELDS = ("report", "sources", "progress", "extracts",
+                       "pipeline_run", "bibtex")
+_RESULT_MAX_QUERY = 2000
+
+
+def _json_size(value) -> int:
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+
+def _fit_result_snapshot(snap: dict) -> dict:
+    """Shorten the texts in _RESULT_TRIM_ORDER until the snapshot fits."""
+    note = "*… shortened to fit into the browser storage.*"
+    for key in _RESULT_TRIM_ORDER:
+        over = _json_size(snap) - RESULT_STORE_MAX_BYTES
+        if over <= 0:
+            break
+        text = snap.get(key) or ""
+        if not text:
+            continue
+        # Every dropped character frees at least one byte of JSON.
+        keep = len(text) - over - _json_size("\n\n" + note) - _json_size(key) - 2
+        # BibTeX only in whole entries, everything else in whole lines
+        cut = "\n@" if key == "bibtex" else "\n"
+        head = text[:keep].rsplit(cut, 1)[0] if keep > 0 else ""
+        snap[key] = f"{head}\n\n{note}" if head else note
+        snap["truncated"].append(key)
+    return snap
+
+
+def build_result_snapshot(ctx, report: str, sources: str, progress: str,
+                          extracts: str, pipeline_run: str) -> dict:
+    """Snapshot of the finished result for gr.BrowserState (JSON only)."""
+    schema = getattr(ctx, "output_schema", None)
+    report = report or ""
+    export_md = ctx.final_report or ""
+    is_check = bool(schema and schema.format_type == "literature_check")
+    bibtex = (ctx.search_stats or {}).get("bibtex") if is_check else ""
+    snap = {
+        "version": 1,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "query": (ctx.query or "")[:_RESULT_MAX_QUERY],
+        "title": (schema.title if schema else "")[:_RESULT_MAX_QUERY],
+        "format_type": schema.format_type if schema else "",
+        "style": schema.style if schema else "",
+        "output_language": ctx.output_language or "",
+        "started_at": ctx.started_at or "",
+        "finished_at": ctx.finished_at or "",
+        "report": report,
+        # Usually the shown report plus banners; stored once if identical.
+        "export_md": None if export_md == report else export_md,
+        "sources": sources or "",
+        "progress": progress or "",
+        "extracts": extracts or "",
+        "pipeline_run": pipeline_run or "",
+        "bibtex": bibtex if isinstance(bibtex, str) else "",
+        "truncated": [],
+    }
+    return _fit_result_snapshot(snap)
+
+
+def _valid_result_snapshot(stored) -> Optional[dict]:
+    """The stored snapshot with every field in shape, or None."""
+    if not isinstance(stored, dict) or stored.get("version") != 1:
+        return None
+    if not isinstance(stored.get("report"), str) or not stored["report"].strip():
+        return None
+    snap = {k: stored.get(k) if isinstance(stored.get(k), str) else ""
+            for k in ("saved_at", "query", "title", "format_type", "style",
+                      "output_language", "started_at", "finished_at",
+                      *_RESULT_TEXT_FIELDS)}
+    export_md = stored.get("export_md")
+    snap["export_md"] = export_md if isinstance(export_md, str) else None
+    truncated = stored.get("truncated")
+    snap["truncated"] = ([t for t in truncated if isinstance(t, str)]
+                         if isinstance(truncated, list) else [])
+    return snap
+
+
+def _context_from_snapshot(snap: dict) -> HarvestContext:
+    """Minimal research object for the exports of a restored result."""
+    ctx = HarvestContext(
+        query=snap["query"],
+        output_language=snap["output_language"] or _default_output_language(),
+    )
+    ctx.final_report = (snap["export_md"] if snap["export_md"] is not None
+                        else snap["report"])
+    if snap["title"] or snap["format_type"]:
+        ctx.output_schema = OutputSchema(
+            title=snap["title"],
+            format_type=snap["format_type"] or "structured_report",
+            style=snap["style"] or OutputSchema.style,
+            language=ctx.output_language,
+        )
+    try:
+        # duration_seconds parses both; keep the original run times.
+        datetime.fromisoformat(snap["started_at"])
+        datetime.fromisoformat(snap["finished_at"])
+        ctx.started_at, ctx.finished_at = snap["started_at"], snap["finished_at"]
+    except ValueError:
+        ctx.finished_at = ctx.started_at
+    ctx.status = "done"
+    return ctx
+
+
+def _restored_snapshot(app_state) -> Optional[dict]:
+    """The stored texts if the shown result was restored from the browser."""
+    snap = getattr(app_state, "restored_result", None)
+    ctx = getattr(app_state, "current_research", None)
+    if snap and ctx is not None and ctx is app_state.browser_result_ctx:
+        return snap
+    return None
+
+
+def _render_pipeline_run_text(ctx) -> str:
+    try:
+        from src.ui.pipeline_run import render_pipeline_run
+        return render_pipeline_run(ctx)
+    except Exception as e:
+        logger.warning("Pipeline-run rendering for the browser copy failed: %s", e)
+        return ""
+
+
+def save_result_to_browser(app_state: AppState, report: str, sources: str,
+                           progress: str, extracts: str):
+    """Store the last result once, when a run has produced a new one.
+
+    Runs at the end of every research chain. Nothing changes when the
+    chain produced no new result (plan gate, autofill stop, error).
+    """
+    ctx = getattr(app_state, "current_research", None)
+    if (not browser_storage_enabled() or ctx is None
+            or app_state.research_running
+            or ctx is app_state.browser_result_ctx):
+        return gr.skip(), gr.skip()
+    snap = build_result_snapshot(ctx, report, sources, progress, extracts,
+                                 _render_pipeline_run_text(ctx))
+    app_state.browser_result_ctx = ctx
+    app_state.restored_result = None
+    return app_state, snap
+
+
+def _restored_banner(snap: dict) -> str:
+    try:
+        when = datetime.fromisoformat(snap["saved_at"]).strftime(
+            "%Y-%m-%d %H:%M")
+    except ValueError:
+        when = snap["saved_at"] or "?"
+    text = (f"↩️ **Restored result** from {when}: kept in this browser and "
+            "shown again after reloading the page. The Word export has no "
+            "metadata appendices.")
+    if snap["truncated"]:
+        text += " Parts were shortened to fit into the browser storage."
+    return f"> {text}\n\n"
+
+
+def restore_result_from_browser(stored, app_state: AppState):
+    """Reopen the result area with the stored last result, if any.
+
+    Returns updates for app_state, the result panel, the four tabs and
+    the pipeline-run view.
+    """
+    snap = _valid_result_snapshot(stored)
+    if snap is None:
+        return (gr.skip(),) * 7
+    app_state = _get_ready_state(app_state)
+    ctx = _context_from_snapshot(snap)
+    app_state.current_research = ctx
+    app_state.browser_result_ctx = ctx
+    app_state.restored_result = snap
+    app_state.result_panel_visible = True
+    return (
+        app_state,
+        gr.update(visible=True),
+        _restored_banner(snap) + snap["report"],
+        snap["sources"],
+        snap["progress"],
+        snap["extracts"],
+        snap["pipeline_run"] or "*No research started yet.*",
+    )
+
+
+def _empty_result_texts() -> tuple[str, str, str, str, str]:
+    """Report, sources, progress, extracts and pipeline run before a run."""
+    return (
+        "*Start a research run...*",
+        "*No sources yet.*",
+        "*Waiting for the research to start...*",
+        "*No extracts yet.*",
+        "*No research started yet.*",
+    )
+
+
+def clear_result(app_state: AppState):
+    """"New chat": forget the result, in the browser and on the page.
+
+    The browser copy is overwritten with an empty dict: Gradio's browser
+    side does not write falsy values, so None would leave it in place.
+    A running research keeps its result area; it is stored when done.
+
+    Returns updates for app_state, the browser copy, the result panel,
+    the four tabs, the pipeline-run view and the download field.
+    """
+    app_state = _get_ready_state(app_state)
+    if app_state.research_running:
+        # still the previous result; only the next one gets stored
+        app_state.browser_result_ctx = app_state.current_research
+        return (app_state, {}) + (gr.skip(),) * 7
+    app_state.current_research = None
+    app_state.browser_result_ctx = None
+    app_state.restored_result = None
+    app_state.result_panel_visible = False
+    return (app_state, {}, gr.update(visible=False), *_empty_result_texts(),
+            gr.update(value=None, visible=False))
+
+
+def _word_export_context(app_state: AppState):
+    """The research object for the Word export.
+
+    A restored result has only its texts: the report plus the sources and
+    extracts tabs as appendices, like the reference check does it.
+    """
+    ctx = app_state.current_research
+    snap = _restored_snapshot(app_state)
+    if snap is None or (ctx.output_schema and
+                        ctx.output_schema.format_type == "literature_check"):
+        return ctx  # the reference check report already has them
+    parts = [ctx.final_report or ""]
+    parts += [snap[k] for k in ("sources", "extracts") if snap[k].strip()]
+    word_ctx = copy.copy(ctx)
+    word_ctx.final_report = "\n\n---\n\n".join(parts)
+    return word_ctx
+
+
 def store_and_clear(msg, paste_buf):
     """Store the message in the state and clear the input immediately
     (queue=False). paste_buf holds fallback text from the JS paste
@@ -2650,7 +2996,7 @@ def export_word(app_state: AppState):
         return None
     try:
         from src.exporters.word_exporter import export_research_to_word
-        ctx = app_state.current_research
+        ctx = _word_export_context(app_state)
         filepath = export_research_to_word(ctx)
         if filepath:
             gr.Info("✅ Word export created.")
@@ -2829,6 +3175,14 @@ async def autofill_preflight_values(app_state, message_value, use_case: str):
     )
 
 
+def _bibtex_text(app_state: AppState) -> str:
+    """BibTeX of the current reference check (stored text if restored)."""
+    snap = _restored_snapshot(app_state)
+    if snap is not None:
+        return snap["bibtex"]
+    return (app_state.current_research.search_stats or {}).get("bibtex") or ""
+
+
 def export_bibtex(app_state: AppState):
     """Export verified bibliography entries as a BibTeX file."""
     if not app_state or not app_state.current_research:
@@ -2840,7 +3194,7 @@ def export_bibtex(app_state: AppState):
         gr.Warning("BibTeX export is only available for literature checks.")
         return None
     try:
-        bibtex = (ctx.search_stats or {}).get("bibtex") or ""
+        bibtex = _bibtex_text(app_state)
         n_entries = len(re.findall(r"^@\w+\s*\{", bibtex, re.M))
         if not n_entries:
             gr.Warning("No bibliography entries to export.")
@@ -2908,6 +3262,12 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
     if config is None:
         config = AppConfig.from_env()
 
+    if browser_storage_enabled():
+        logger.info("Browser storage: on — chat and last result are kept "
+                    "in the browser, encrypted with BROWSER_STORAGE_SECRET")
+    else:
+        logger.info("Browser storage: off — set BROWSER_STORAGE_SECRET to enable")
+
     with gr.Blocks(
         title=TOOL_NAME,
         analytics_enabled=False,    # second line of defence (the first is the env)
@@ -2931,6 +3291,19 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
         # --- State ---
         app_state = gr.State(init_app_state())
         stored_message = gr.State(None)
+        # Chat and last result in the browser's localStorage (see
+        # save_chat_to_browser, save_result_to_browser), only with a fixed
+        # secret. Without one, plain session states take their place:
+        # nothing reaches the browser and the save handlers do nothing.
+        storage_secret = _browser_storage_secret()
+        if storage_secret:
+            chat_store = gr.BrowserState(None, storage_key=CHAT_STORAGE_KEY,
+                                         secret=storage_secret)
+            result_store = gr.BrowserState(None, storage_key=RESULT_STORAGE_KEY,
+                                           secret=storage_secret)
+        else:
+            chat_store = gr.State(None)
+            result_store = gr.State(None)
 
         # Hidden elements
         paste_buffer = gr.Textbox(value="", elem_id="paste-buffer", visible=False)
@@ -3270,15 +3643,17 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 )
 
                 with gr.Tabs():
+                    (empty_report, empty_sources, empty_progress,
+                     empty_extracts, empty_pipeline_run) = _empty_result_texts()
                     with gr.TabItem("📄 Report"):
                         report_display = gr.Markdown(
-                            value="*Start a research run...*",
+                            value=empty_report,
                             elem_id="report-display",
                         )
 
                     with gr.TabItem("🔗 Sources"):
                         sources_display = gr.Markdown(
-                            value="*No sources yet.*",
+                            value=empty_sources,
                             elem_id="sources-display",
                         )
 
@@ -3287,13 +3662,13 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                     with gr.TabItem("🧭 History", elem_id="history-tab"):
                         with gr.Accordion("📊 Progress", open=True):
                             progress_display = gr.Markdown(
-                                value="*Waiting for the research to start...*",
+                                value=empty_progress,
                                 elem_id="progress-display",
                             )
 
                         with gr.Accordion("📝 Extracts", open=False):
                             extracts_display = gr.Markdown(
-                                value="*No extracts yet.*",
+                                value=empty_extracts,
                                 elem_id="extracts-display",
                             )
 
@@ -3310,7 +3685,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                             # changes (via a .change() handler further
                             # down).
                             pipeline_run_display = gr.Markdown(
-                                value="*No research started yet.*",
+                                value=empty_pipeline_run,
                                 elem_id="pipeline-run-display",
                             )
 
@@ -3394,6 +3769,11 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             outputs=chat_outputs,
         ).then(
             None, js=_CHAT_ACTION_JS, queue=False,
+        ).then(
+            save_chat_to_browser,
+            inputs=[chatbot, app_state],
+            outputs=[chat_store],
+            queue=False,
         )
 
         message_input.submit(
@@ -3407,6 +3787,11 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             outputs=chat_outputs,
         ).then(
             None, js=_CHAT_ACTION_JS, queue=False,
+        ).then(
+            save_chat_to_browser,
+            inputs=[chatbot, app_state],
+            outputs=[chat_store],
+            queue=False,
         )
 
         # --- Research / institution / literature (unified via the dropdown) ---
@@ -3457,6 +3842,10 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             """
             if state is None or not getattr(state, "current_research", None):
                 return "*No research started yet.*"
+            # A restored result has no research object to render from.
+            restored = _restored_snapshot(state)
+            if restored:
+                return restored["pipeline_run"] or "*No research started yet.*"
             try:
                 return render_pipeline_run(state.current_research)
             except Exception as e:
@@ -3588,6 +3977,17 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             outputs=[plan_gate_group, plan_md, query_edit_box,
                      confirm_btn, cancel_btn],
             queue=False,
+        ).then(
+            save_chat_to_browser,
+            inputs=[chatbot, app_state],
+            outputs=[chat_store],
+            queue=False,
+        ).then(
+            save_result_to_browser,
+            inputs=[app_state, report_display, sources_display,
+                    progress_display, extracts_display],
+            outputs=[app_state, result_store],
+            queue=False,
         )
 
         # Plan-Preview-Gate: Confirm & Cancel
@@ -3600,6 +4000,17 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             outputs=[plan_gate_group, plan_md, query_edit_box,
                      confirm_btn, cancel_btn],
             queue=False,
+        ).then(
+            save_chat_to_browser,
+            inputs=[chatbot, app_state],
+            outputs=[chat_store],
+            queue=False,
+        ).then(
+            save_result_to_browser,
+            inputs=[app_state, report_display, sources_display,
+                    progress_display, extracts_display],
+            outputs=[app_state, result_store],
+            queue=False,
         )
 
         cancel_btn.click(
@@ -3610,6 +4021,11 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 plan_gate_group, plan_md, query_edit_box,
                 confirm_btn, cancel_btn,
             ],
+            queue=False,
+        ).then(
+            save_chat_to_browser,
+            inputs=[chatbot, app_state],
+            outputs=[chat_store],
             queue=False,
         )
 
@@ -3641,6 +4057,18 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             new_chat,
             inputs=[app_state],
             outputs=[app_state, chatbot],
+            queue=False,
+        ).then(
+            save_chat_to_browser,
+            inputs=[chatbot, app_state],
+            outputs=[chat_store],
+            queue=False,
+        ).then(
+            clear_result,
+            inputs=[app_state],
+            outputs=[app_state, result_store, result_panel,
+                     report_display, sources_display, progress_display,
+                     extracts_display, pipeline_run_display, export_file],
             queue=False,
         )
 
@@ -3731,6 +4159,25 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 }
             }""",
         )
+
+        # Restore the chat stored in this browser, then link its action
+        # phrases again (the link script only looks at the last message),
+        # then reopen the last result.
+        if storage_secret:
+            demo.load(
+                restore_chat_from_browser,
+                inputs=[chat_store, app_state],
+                outputs=[app_state, chatbot],
+                queue=False,
+            ).then(
+                None, js=_CHAT_ACTION_JS, queue=False,
+            ).then(
+                restore_result_from_browser,
+                inputs=[result_store, app_state],
+                outputs=[app_state, result_panel, report_display, sources_display,
+                         progress_display, extracts_display, pipeline_run_display],
+                queue=False,
+            )
 
         # Auto Dark-Mode + Paste-Interceptor
         demo.load(

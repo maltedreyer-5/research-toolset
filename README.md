@@ -74,7 +74,9 @@ user, binds to `0.0.0.0` inside the container and has a health check.
 
 All settings are environment variables. [`.env.example`](.env.example) lists
 every variable the code reads, with its default. Only the LLM endpoint is
-required. Details: [configuration](docs/configuration.md).
+required; set `BROWSER_STORAGE_SECRET` to keep the chat and the last result
+in the browser across page reloads (off by default). Details:
+[configuration](docs/configuration.md).
 
 ## Output languages
 
@@ -89,6 +91,10 @@ no code change needed. See [output languages](docs/output-languages.md).
   switches are turned off before Gradio is imported.
 - No external fonts in the interface (system fonts only), no share links, no public API
   documentation; event handlers are not exposed as an API.
+- Only if `BROWSER_STORAGE_SECRET` is set, the chat and the last result are
+  kept in the user's own browser (localStorage, encrypted with that key),
+  not on the server; *New chat* removes them. Off by default, which suits
+  shared computers.
 - Uploaded files and download caches are removed by Gradio after a few hours;
   stored research runs are deleted after `CLEANUP_MAX_AGE_DAYS` (default 30).
 - Outgoing requests go only to the endpoints you configure. Every fetched URL

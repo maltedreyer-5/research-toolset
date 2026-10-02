@@ -40,7 +40,7 @@ class _C:
 class _B(_C):
     def queue(s,*a,**k): return s
     def launch(s,*a,**k): return s
-for n in ["Accordion","Button","Chatbot","Checkbox","Column","Dropdown",
+for n in ["Accordion","BrowserState","Button","Chatbot","Checkbox","Column","Dropdown",
           "File","Group","HTML","Markdown","MultimodalTextbox","Row",
           "State","TabItem","Tabs","Textbox"]:
     setattr(g,n,type(n,(_C,),{}))

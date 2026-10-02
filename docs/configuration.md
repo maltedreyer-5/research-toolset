@@ -76,6 +76,7 @@ catalog is inconsistent. See [output languages](output-languages.md).
 | `DATA_DIR` | `data/runs` | where completed runs are stored |
 | `CLEANUP_MAX_AGE_DAYS` | `30` | stored runs older than this are deleted (at start-up and every 6 hours) |
 | `APP_TEMP_DIR` | system temp directory | Gradio's upload and download cache; files are removed after 4 hours |
+| `BROWSER_STORAGE_SECRET` | — (off) | turns on keeping the chat and the last result in the browser's localStorage, encrypted with this key, so that they survive a page reload. Without it nothing is stored (safe default for shared computers). Use a fixed random value, e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; changing it makes stored data unreadable. The start-up log says whether browser storage is on |
 
 ## Optional sources
 
