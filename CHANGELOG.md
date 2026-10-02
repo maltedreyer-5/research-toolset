@@ -6,6 +6,18 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Calmer layout: text field and toolbar form one input card with a single
+  accent button (*Start research*). Report template, report language and
+  the check boxes sit in a collapsible options row that shows only what
+  applies to the selected mode.
+- Export moved into the header of the result panel; the download field
+  appears only once there is a file. Progress, Extracts and Pipeline run
+  are combined into one *History* tab next to *Report* and *Sources*.
+- Labelled header buttons (*Documents*, *New chat*, *Result*); *New chat*
+  lives only in the header.
+
 ### Fixed
 
 - BibTeX export of a reference check: it looked for entries nothing ever

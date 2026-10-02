@@ -30,17 +30,21 @@ footer { display: none !important; }
     min-height: 40px;
 }
 
-#sidebar-toggle, #result-toggle, #dark-mode-toggle {
-    min-width: 36px !important;
-    max-width: 36px !important;
-    padding: 6px !important;
-    font-size: 1.1rem;
+.header-btn {
+    min-width: 0 !important;
+    width: auto !important;
+    flex: 0 0 auto !important;
+    min-height: 36px !important;
+    padding: 6px 12px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    white-space: nowrap;
     border: none !important;
     background: transparent !important;
     box-shadow: none !important;
 }
 
-#sidebar-toggle:hover, #result-toggle:hover, #dark-mode-toggle:hover {
+.header-btn:hover {
     background: var(--background-fill-secondary) !important;
 }
 
@@ -118,37 +122,141 @@ footer { display: none !important; }
     box-shadow: none !important;
 }
 
-#input-row {
-    padding: 8px 12px !important;
-    gap: 4px !important;
-    border-top: 1px solid var(--border-color-primary);
+/* input card: text field + toolbar + collapsible options */
+#composer {
+    flex: 0 0 auto !important;   /* equal_height row would stretch it */
+    margin: 8px 12px 10px !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    border: 1px solid var(--border-color-primary);
+    border-radius: 12px;
+    background: var(--input-background-fill);
+    overflow: visible;
+    width: auto !important;
 }
 
-#message-input {
-    border-radius: 12px !important;
+/* the text field blends into the card: no frame of its own */
+#message-input,
+#message-input .full-container {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
 }
+#message-input .full-container { padding: 8px 10px 0 !important; }
 #message-input textarea {
+    font-size: 15px !important;
     min-height: 44px !important;
     max-height: 400px !important;
     overflow-y: auto !important;
     resize: vertical !important;
 }
 
-#send-btn, #stop-btn {
-    min-width: 50px !important;
-    border-radius: 12px !important;
+#composer-toolbar {
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 4px 8px 8px !important;
+    flex-wrap: wrap !important;
 }
 
+/* Gradio wraps form fields in a .form box with its own fill */
+#composer > .form,
+#composer-toolbar > .form,
+#options-panel > .form,
+#options-checks > .form {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    gap: 12px !important;
+}
+#composer-toolbar > .form { flex: 0 1 230px !important; }
+
+/* compact mode selector in the toolbar */
+#research-mode {
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    flex-grow: 1 !important;
+}
+#research-mode .wrap {
+    height: 36px !important;
+    min-height: 36px !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+}
+#research-mode .wrap-inner,
+#research-mode .secondary-wrap {
+    height: 34px !important;
+    padding: 0 10px !important;
+}
+#research-mode .secondary-wrap { padding: 0 !important; }
+
+/* discuss + start stay together and sit on the right */
+#composer-actions {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    margin-left: auto !important;
+    gap: 8px !important;
+    flex-wrap: nowrap !important;
+}
+#research-mode input {
+    height: 34px !important;
+    font-size: 14px !important;
+}
+
+/* all toolbar buttons: readable size, same height and radius */
+#composer-toolbar button,
+#result-header button {
+    min-height: 36px !important;
+    padding: 6px 14px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    border-radius: 8px !important;
+    white-space: nowrap;
+    flex: 0 0 auto !important;
+    width: auto !important;
+}
+
+/* "Options" and "Discuss the request" are secondary: quiet until hovered.
+   margin-left:auto on send pushes the action group to the right. */
+#options-btn, #send-btn {
+    background: transparent !important;
+    border: 1px solid var(--border-color-primary) !important;
+    box-shadow: none !important;
+}
+#options-btn:hover, #send-btn:hover {
+    background: var(--background-fill-secondary) !important;
+}
+body[data-options-open] #options-btn {
+    background: var(--color-accent-soft) !important;
+    border-color: var(--color-accent) !important;
+}
+
+/* the only accent button */
 #research-btn {
-    min-width: 50px !important;
-    border-radius: 12px !important;
-    background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
-    color: white !important;
+    background: var(--button-primary-background-fill) !important;
+    color: var(--button-primary-text-color) !important;
     border: none !important;
 }
-
 #research-btn:hover {
-    background: linear-gradient(135deg, #2563eb, #7c3aed) !important;
+    background: var(--button-primary-background-fill-hover) !important;
+}
+
+/* options row: closed unless the "Options" button set the body flag */
+#options-panel {
+    padding: 8px 12px 12px !important;
+    gap: 12px !important;
+    border-top: 1px solid var(--border-color-primary);
+    align-items: flex-end !important;
+}
+body:not([data-options-open]) #options-panel {
+    display: none !important;
+}
+#options-checks {
+    gap: 2px !important;
+}
+#options-checks label {
+    font-size: 14px !important;
 }
 
 /* ========================================
@@ -160,12 +268,38 @@ footer { display: none !important; }
     padding: 8px 12px !important;
 }
 
+/* the panel's column stretches its children (equal_height row):
+   keep the header and download field at their natural height */
+#result-header, #export-file {
+    flex: 0 0 auto !important;
+}
+#result-header {
+    align-items: center !important;
+    gap: 6px !important;
+}
+#result-title {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 80px !important;
+}
+#result-title p { margin: 0; font-size: 15px; }
+.export-btn {
+    background: transparent !important;
+    border: 1px solid var(--border-color-primary) !important;
+    box-shadow: none !important;
+}
+.export-btn:hover { background: var(--background-fill-secondary) !important; }
+
 /* all 4 tab contents: scroll bar for long content */
 #report-display,
-#sources-display,
-#progress-display,
-#extracts-display {
-    max-height: calc(100vh - 160px);
+#sources-display {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+}
+
+/* "History" bundles three sections; the tab scrolls as a whole */
+#history-tab {
+    max-height: calc(100vh - 200px);
     overflow-y: auto;
 }
 
@@ -211,23 +345,6 @@ footer { display: none !important; }
 }
 
 .source-item a:hover { text-decoration: underline; }
-
-/* ========================================
-   Template chips
-   ======================================== */
-
-#template-chips {
-    padding: 4px 12px !important;
-    gap: 4px !important;
-    flex-wrap: wrap;
-}
-
-#template-chips button {
-    font-size: 0.75rem !important;
-    padding: 4px 10px !important;
-    border-radius: 16px !important;
-    white-space: nowrap;
-}
 
 /* ========================================
    Hidden elements
@@ -287,10 +404,6 @@ footer { display: none !important; }
 #app-footer a { color: var(--body-text-color-subdued); text-decoration: none; }
 #app-footer a:hover { text-decoration: underline; }
 
-/* export area (left, below the template row) */
-#export-row {
-    gap: 6px !important;
-}
 #export-file {
     min-height: 0 !important;
 }
