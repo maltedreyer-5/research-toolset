@@ -6,6 +6,8 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-02
+
 ### Added
 
 - Optional browser storage (`BROWSER_STORAGE_SECRET`): the chat (what is
@@ -95,5 +97,6 @@ First public release.
 - SSRF protection for every fetched URL, TLS verification on by default,
   binding to `127.0.0.1` by default, Docker image running as an unprivileged user.
 
-[Unreleased]: https://github.com/maltedreyer-5/research-toolset/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/maltedreyer-5/research-toolset/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/maltedreyer-5/research-toolset/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/maltedreyer-5/research-toolset/releases/tag/v1.0.0
