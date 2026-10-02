@@ -19,6 +19,7 @@ All three functions are Gradio-agnostic and unit-testable.
 from __future__ import annotations
 
 from typing import Any
+from src.ui.i18n import tr
 
 
 def shorten_for_display(text: str, max_len: int = 80) -> str:
@@ -57,7 +58,7 @@ def make_chat_summary(use_case: str, inputs: dict) -> str:
         if value:
             return shorten_for_display(value, 200)
     if "paper_text" in inputs:
-        return f"Paper ({len(str(inputs['paper_text']))} characters)"
+        return tr("Paper ({n} characters)", n=len(str(inputs['paper_text'])))
     # Last resort: any filled text field, rather than the technical
     # use-case name.
     for value in inputs.values():
@@ -140,7 +141,7 @@ def format_analysis_event(event: str, data: Any) -> str:
 
     if event == "node_start":
         node = data.get("node", "?")
-        return f"▶️ Starting: `{node}`"
+        return tr("▶️ Starting: `{node}`", node=node)
 
     if event == "node_done":
         node = data.get("node", "?")
@@ -150,41 +151,41 @@ def format_analysis_event(event: str, data: Any) -> str:
         if "done" in meta and "executed" in meta:
             extra = (
                 f" — {meta['done']}/{meta['executed']} OK"
-                + (f", {meta['failed']} failed"
+                + (tr(", {n} failed", n=meta['failed'])
                    if meta.get("failed") else "")
             )
         else:
             extra = ""
         ms_str = f" ({ms} ms)" if ms is not None else ""
-        return f"✅ `{node}` done{extra}{ms_str}"
+        return tr("✅ `{node}` done", node=node) + f"{extra}{ms_str}"
 
     if event == "node_skipped":
         node = data.get("node", "?")
         reason = data.get("reason", "")
-        return f"⊘ `{node}` skipped{(': ' + reason) if reason else ''}"
+        return tr("⊘ `{node}` skipped", node=node) + (f": {reason}" if reason else "")
 
     if event == "node_failed":
         node = data.get("node", "?")
-        error = data.get("error", "Unknown error")
+        error = data.get("error", tr("Unknown error"))
         # Shorten long errors
         if len(error) > 200:
             error = error[:200] + "…"
-        return f"❌ `{node}` failed: {error}"
+        return tr("❌ `{node}` failed: {error}", node=node, error=error)
 
     if event == "pipeline_done":
         n = data.get("nodes", 0)
-        return f"🏁 Pipeline finished ({n} nodes)"
+        return tr("🏁 Pipeline finished ({n} nodes)", n=n)
 
     if event == "pipeline_stopped":
-        return "⏹ Pipeline stopped"
+        return tr("⏹ Pipeline stopped")
 
     if event == "plan_ready":
         n_tasks = data.get("n_tasks", 0)
-        return f"📋 Plan created ({n_tasks} tasks)"
+        return tr("📋 Plan created ({n} tasks)", n=n_tasks)
 
     if event == "error":
-        msg = data.get("message", str(data) if data else "Unknown error")
-        return f"❌ Error: {msg}"
+        msg = data.get("message", str(data) if data else tr("Unknown error"))
+        return tr("❌ Error: {error}", error=msg)
 
     # Unknown event — return nothing rather than producing noise
     return ""

@@ -78,9 +78,13 @@ required; set `BROWSER_STORAGE_SECRET` to keep the chat and the last result
 in the browser across page reloads (off by default). Details:
 [configuration](docs/configuration.md).
 
-## Output languages
+## Languages
 
-The user interface is English. Reports can be written in any language that
+The user interface is available in English and German; a switch in the
+header changes it (each language is its own page, e.g. `/de`). See
+[interface languages](docs/output-languages.md#interface-languages).
+
+Reports can be written in any language that
 has a catalog: English is always available, German ships with the tool, and
 further languages are added by dropping a catalog file into a directory —
 no code change needed. See [output languages](docs/output-languages.md).

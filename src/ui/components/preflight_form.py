@@ -27,6 +27,7 @@ from typing import Callable
 import gradio as gr
 
 from src.pipeline.analysis_pipeline import PreflightChecker, Requirement
+from src.ui.i18n import tr
 
 
 def render_preflight_form(
@@ -67,13 +68,19 @@ def render_preflight_form(
 
 
 def _make_component(req: Requirement):
-    """Build the matching Gradio component for a requirement."""
-    label = req.label + (" *" if req.required else "")
-    info = req.placeholder or None
+    """Build the matching Gradio component for a requirement.
+
+    Labels, placeholders and choice labels are English in the registry and
+    translated here, in the language of the page being built.
+    """
+    label = tr(req.label) + (" *" if req.required else "")
+    placeholder = tr(req.placeholder) if req.placeholder else ""
+    info = placeholder or None
 
     if req.kind == "choice" and req.choices:
         return gr.Dropdown(
-            choices=list(req.choices),
+            choices=[(tr(c[0]), c[1]) if isinstance(c, (tuple, list)) else c
+                     for c in req.choices],
             value=None,
             label=label,
             info=info,
@@ -83,7 +90,7 @@ def _make_component(req: Requirement):
     if req.kind == "textarea":
         return gr.Textbox(
             label=label,
-            placeholder=req.placeholder or "",
+            placeholder=placeholder,
             info=info,
             lines=4,
             max_lines=10,
@@ -93,7 +100,7 @@ def _make_component(req: Requirement):
     # Default: single-line textbox
     return gr.Textbox(
         label=label,
-        placeholder=req.placeholder or "",
+        placeholder=placeholder,
         info=info,
         lines=1,
         elem_id=f"preflight-{req.field}",

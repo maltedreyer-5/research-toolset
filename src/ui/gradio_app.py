@@ -33,14 +33,16 @@ from src.pipeline.orchestrator import ResearchOrchestrator
 from src.pipeline.models import (
     HarvestContext, OutputSchema, DEFAULT_TEMPLATE, template_choices,
 )
-from src.prompts import SYSTEM_PROMPT_CHAT, get_date_text
-from src.prompts.research import render_chat_system_prompt
+from src.prompts import get_date_text
+from src.prompts.research import chat_system_prompt, render_chat_system_prompt
 from src.institution import get_profile
 from src.ui.chat_actions import js_replace_rules
 from src.llm.client import THINKING_PLACEHOLDER
 from src.about import TOOL_NAME
 from src.pipeline.analysis_pipeline import EXPLAINER_LENGTHS, EXPLAINER_PURPOSES
 from src.output_language import default_language, language_choices
+from src.ui import i18n
+from src.ui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -249,9 +251,19 @@ def _get_ready_state(app_state) -> AppState:
 # Helper Functions
 # =====================================================================
 
+def thinking_placeholder() -> str:
+    """The LLM client's "thinking" placeholder in the interface language."""
+    return tr("🤔 *Thinking...*")  # = THINKING_PLACEHOLDER
+
+
+def _no_documents_html() -> str:
+    return ("<p style='color: var(--body-text-color-subdued); font-size: 0.8rem;'>"
+            f"{tr('No documents.')}</p>")
+
+
 def _build_doc_list_html(app_state: AppState) -> str:
     if not app_state.documents:
-        return "<p style='color: var(--body-text-color-subdued); font-size: 0.8rem;'>No documents.</p>"
+        return _no_documents_html()
     html = ""
     for info in app_state.documents.values():
         name = html_escape(info["filename"], quote=True)
@@ -292,39 +304,42 @@ def _format_progress(phase: str, data) -> str:
     """Format progress updates for the UI."""
     if phase == "format":
         schema = data
-        return f"### 📋 Output format\n**{schema.title}**\nType: {schema.format_type}\n"
+        return tr("### 📋 Output format\n**{title}**\nType: {type}\n",
+                  title=schema.title, type=schema.format_type)
 
     elif phase == "plan":
         plan = data
-        lines = [f"### 🔍 Research plan\n{plan.summary}\n"]
+        lines = [tr("### 🔍 Research plan\n{summary}\n", summary=plan.summary)]
         for q in plan.questions:
             langs = ", ".join(q.search_langs) if q.search_langs else "de, en"
             lines.append(f"- **{q.id}** [{langs}]: {q.question}")
         if plan.direct_urls:
-            lines.append(f"\n**Direct URLs:** {len(plan.direct_urls)}")
+            lines.append(tr("\n**Direct URLs:** {n}", n=len(plan.direct_urls)))
         if plan.git_repos:
-            lines.append(f"**Git-Repos:** {len(plan.git_repos)}")
+            lines.append(tr("**Git repos:** {n}", n=len(plan.git_repos)))
         if plan.directory_queries:
-            lines.append(f"**👤 Person directory queries:** {len(plan.directory_queries)}")
+            lines.append(tr("**👤 Person directory queries:** {n}", n=len(plan.directory_queries)))
             for zq in plan.directory_queries:
-                lines.append(f'  - „{zq.query}"')
+                lines.append(tr('  - “{query}”', query=zq.query))
         return "\n".join(lines)
 
     elif phase == "search_results":
-        return (f"### 🌐 Search results\n"
-                f"Found: {data['total_found']} → {data['unique']} unique\n")
+        return tr("### 🌐 Search results\nFound: {total} → {unique} unique\n",
+                  total=data['total_found'], unique=data['unique'])
 
     elif phase == "harvest_done":
-        return (f"### 📝 Round {data['round']}\n"
-                f"Sources: {data['total_sources']} | "
-                f"Extracts: {data['total_extracts']}\n")
+        return tr("### 📝 Round {round}\nSources: {sources} | Extracts: {extracts}\n",
+                  round=data['round'], sources=data['total_sources'],
+                  extracts=data['total_extracts'])
 
     elif phase == "gaps":
         gap = data
         if gap.should_continue:
-            return f"### 🔎 Gaps found\n{gap.reasoning}\n→ Another round..."
+            return tr("### 🔎 Gaps found\n{reasoning}\n→ Another round...",
+                      reasoning=gap.reasoning)
         else:
-            return f"### ✅ Research complete\n{gap.reasoning}\n"
+            return tr("### ✅ Research complete\n{reasoning}\n",
+                      reasoning=gap.reasoning)
 
     return f"*{phase}*\n"
 
@@ -332,18 +347,18 @@ def _format_progress(phase: str, data) -> str:
 def _format_sources_log(sources: list, fetch_updates: list) -> str:
     """Format the sources overview — grouped by type."""
     if not sources and not fetch_updates:
-        return "*No sources yet...*"
+        return tr("*No sources yet...*")
 
     # During the research: only show fetch_updates as a simple list
     if not sources and fetch_updates:
-        lines = [f"### 📥 Loading sources... ({len(fetch_updates)} so far)\n"]
+        lines = [tr("### 📥 Loading sources... ({n} so far)\n", n=len(fetch_updates))]
         for i, fu in enumerate(fetch_updates[-15:], 1):
             title = (fu.get("title", "") or "")[:60]
             length = fu.get("length", 0)
-            suffix = f" · {length:,} characters" if length else ""
+            suffix = tr(" · {n} characters", n=f"{length:,}") if length else ""
             lines.append(f"{i}. {title}{suffix}")
         if len(fetch_updates) > 15:
-            lines.append(f"\n*... and {len(fetch_updates) - 15} more*")
+            lines.append(tr("\n*... and {n} more*", n=len(fetch_updates) - 15))
         return "\n".join(lines)
 
     from urllib.parse import urlparse
@@ -354,18 +369,18 @@ def _format_sources_log(sources: list, fetch_updates: list) -> str:
     type_labels = {
         "web_search": ("🌐", "Web"),
         "web_page": ("🌐", "Web"),
-        "git_repo": ("📦", "Git-Repos"),
-        "git_file": ("📄", "Git files"),
+        "git_repo": ("📦", tr("Git repos")),
+        "git_file": ("📄", tr("Git files")),
         "git_issue": ("🐛", "Issues"),
-        "local_file": ("📎", "Local files"),
-        "elastic": ("🔎", "Website-Index"),
-        "directory_person": ("👤", "Person directory: people"),
-        "directory_org": ("🏛️", "Person directory: units"),
+        "local_file": ("📎", tr("Local files")),
+        "elastic": ("🔎", tr("Website index")),
+        "directory_person": ("👤", tr("Person directory: people")),
+        "directory_org": ("🏛️", tr("Person directory: units")),
     }
 
     for s in sources:
         type_key = s.source_type.value if hasattr(s.source_type, "value") else str(s.source_type)
-        icon, label = type_labels.get(type_key, ("📄", "Other"))
+        icon, label = type_labels.get(type_key, ("📄", tr("Other")))
         if label not in groups:
             groups[label] = (icon, [])
         url = clean_url(s.url) if s.url else ""
@@ -378,7 +393,7 @@ def _format_sources_log(sources: list, fetch_updates: list) -> str:
         title = (s.title or url)[:80]
         groups[label][1].append((title, url, domain))
 
-    lines = [f"### 🔗 Sources ({len(sources)} in total)\n"]
+    lines = [tr("### 🔗 Sources ({n} in total)\n", n=len(sources))]
 
     for label, (icon, items) in groups.items():
         lines.append(f"\n**{icon} {label}** ({len(items)})\n")
@@ -395,7 +410,7 @@ def _format_sources_log(sources: list, fetch_updates: list) -> str:
 def _format_extracts(harvest_results: list, research_plan=None) -> str:
     """Format the extracts — grouped by question, with reliability icons."""
     if not harvest_results:
-        return "*No extracts yet...*"
+        return tr("*No extracts yet...*")
 
     # Collect all extracts
     all_extracts = []
@@ -404,7 +419,7 @@ def _format_extracts(harvest_results: list, research_plan=None) -> str:
             all_extracts.extend(hr.extracts)
 
     if not all_extracts:
-        return "*No relevant extracts found.*"
+        return tr("*No relevant extracts found.*")
 
     rel_icon = {"high": "🟢", "medium": "🟡", "low": "🔴"}
     total = len(all_extracts)
@@ -423,7 +438,7 @@ def _format_extracts(harvest_results: list, research_plan=None) -> str:
         for q in research_plan.questions:
             q_labels[q.id] = q.question
 
-    lines = [f"### 📝 Extracts ({total} in total)\n"]
+    lines = [tr("### 📝 Extracts ({n} in total)\n", n=total)]
 
     for qid in sorted(by_question.keys()):
         exts = by_question[qid]
@@ -433,7 +448,8 @@ def _format_extracts(harvest_results: list, research_plan=None) -> str:
 
         lines.append(
             f"<details><summary><b>{header}</b> "
-            f"({len(exts)} extracts, {sources} sources)</summary>\n"
+            + tr("({extracts} extracts, {sources} sources)", extracts=len(exts), sources=sources)
+            + "</summary>\n"
         )
         for ext in exts:
             icon = rel_icon.get(ext.reliability, "⚪")
@@ -578,7 +594,7 @@ async def _process_input(app_state: AppState, msg) -> tuple[str, bool]:
                 logger.error(f"Document processing failed: {filename}: {e}")
                 gr.Warning(f"⚠️ {filename}: {e}")
         else:
-            gr.Warning(f"⚠️ {filename}: format not supported")
+            gr.Warning(tr("⚠️ {name}: format not supported", name=filename))
 
     return text.strip(), docs_added
 
@@ -610,17 +626,18 @@ async def send_chat_message(app_state: AppState, msg: dict, chatbot: list,
     app_state.chat_history.append({"role": "user", "content": text})
 
     # Throbber
-    chatbot.append({"role": "assistant", "content": THINKING_PLACEHOLDER})
+    chatbot.append({"role": "assistant", "content": thinking_placeholder()})
     yield app_state, chatbot, gr.update(visible=False), gr.update(visible=True)
 
     # API-Call
     had_date = "{date}" in system_prompt or "{datum}" in system_prompt
-    system = render_chat_system_prompt(system_prompt.strip(), get_date_text())
+    system = render_chat_system_prompt(system_prompt.strip(), get_date_text(),
+                                       i18n.current())
     if not had_date:
         system += "\n\n" + get_date_text()
     doc_context = _get_doc_context(app_state)
     if doc_context:
-        system += f"\n\nDocument context:\n{doc_context[:5000]}"
+        system += tr("\n\nDocument context:\n") + doc_context[:5000]
 
     messages = [{"role": "system", "content": system}]
     for m in app_state.chat_history[-20:]:
@@ -630,13 +647,15 @@ async def send_chat_message(app_state: AppState, msg: dict, chatbot: list,
     try:
         async for chunk in app_state.llm.primary.stream(messages):
             assistant_response = chunk
+            if assistant_response == THINKING_PLACEHOLDER:
+                assistant_response = thinking_placeholder()
             if not assistant_response.strip():
                 continue
             display = list(chatbot[:-1])
             display.append({"role": "assistant", "content": assistant_response})
             yield app_state, display, gr.update(visible=False), gr.update(visible=True)
     except Exception as e:
-        assistant_response = f"⚠️ Error: {e}"
+        assistant_response = tr("⚠️ Error: {error}", error=e)
 
     app_state.chat_history.append({"role": "assistant", "content": assistant_response})
     chatbot = list(chatbot[:-1])
@@ -697,24 +716,25 @@ async def _drive_research_pipeline(
             n_q = len(data.questions) if hasattr(data, "questions") else 0
             urls = len(data.direct_urls) if hasattr(data, "direct_urls") else 0
             directory = len(data.directory_queries) if hasattr(data, "directory_queries") else 0
-            plan_info = f"🗺️ **Plan:** {n_q} questions, {urls} direct URLs"
+            plan_info = tr("🗺️ **Plan:** {questions} questions, {urls} direct URLs",
+                           questions=n_q, urls=urls)
             if directory:
-                plan_info += f", {directory} person directory queries"
+                plan_info += tr(", {n} person directory queries", n=directory)
             live_lines.append(plan_info)
             _update_ready.set()
         elif phase == "search_strategy":
             langs = data.get("languages", [])
             lang_names = {
-                "de": "🇩🇪 German", "en": "🇬🇧 English",
-                "zh": "🇨🇳 Chinese", "pt": "🇧🇷 Portuguese",
-                "es": "🇪🇸 Spanish", "fr": "🇫🇷 French",
-                "ja": "🇯🇵 Japanese", "ko": "🇰🇷 Korean",
-                "ru": "🇷🇺 Russian", "it": "🇮🇹 Italian",
-                "nl": "🇳🇱 Dutch", "ar": "🇸🇦 Arabic",
-                "pl": "🇵🇱 Polish", "tr": "🇹🇷 Turkish",
+                "de": "🇩🇪 " + tr("German"), "en": "🇬🇧 " + tr("English"),
+                "zh": "🇨🇳 " + tr("Chinese"), "pt": "🇧🇷 " + tr("Portuguese"),
+                "es": "🇪🇸 " + tr("Spanish"), "fr": "🇫🇷 " + tr("French"),
+                "ja": "🇯🇵 " + tr("Japanese"), "ko": "🇰🇷 " + tr("Korean"),
+                "ru": "🇷🇺 " + tr("Russian"), "it": "🇮🇹 " + tr("Italian"),
+                "nl": "🇳🇱 " + tr("Dutch"), "ar": "🇸🇦 " + tr("Arabic"),
+                "pl": "🇵🇱 " + tr("Polish"), "tr": "🇹🇷 " + tr("Turkish"),
             }
             lang_display = ", ".join(lang_names.get(l, l) for l in langs)
-            live_lines.append(f"🌍 **Search languages:** {lang_display}")
+            live_lines.append(tr("🌍 **Search languages:** {langs}", langs=lang_display))
             terms_by_lang = data.get("terms_by_lang", {})
             for lang, terms in terms_by_lang.items():
                 name = lang_names.get(lang, lang)
@@ -722,8 +742,8 @@ async def _drive_research_pipeline(
                 if len(terms) > 4:
                     terms_preview += f" (+{len(terms) - 4})"
                 live_lines.append(f"  {name}: {terms_preview}")
-            strategy_lines = ["\n### 🌍 Search strategy\n"]
-            strategy_lines.append(f"**Languages:** {lang_display}\n")
+            strategy_lines = [tr("\n### 🌍 Search strategy\n")]
+            strategy_lines.append(tr("**Languages:** {langs}\n", langs=lang_display))
             for lang, terms in terms_by_lang.items():
                 name = lang_names.get(lang, lang)
                 strategy_lines.append(f"**{name}:**")
@@ -735,34 +755,35 @@ async def _drive_research_pipeline(
         elif phase == "search_results":
             progress_md += _format_progress(phase, data)
             live_lines.append(
-                f"🌐 **Search:** {data.get('unique', '?')} sources found"
+                tr("🌐 **Search:** {n} sources found", n=data.get('unique', '?'))
             )
             _update_ready.set()
         elif phase == "fetch_one":
             fetch_updates.append(data)
             n = len(fetch_updates)
             title = (data.get("title", "") or "")[:50]
-            live_lines.append(f"📥 Source {n}: {title}")
+            live_lines.append(tr("📥 Source {n}: {title}", n=n, title=title))
             _update_ready.set()
         elif phase == "harvest_one":
             title = (data.get("title", "") or "")[:50] if isinstance(data, dict) else ""
-            live_lines.append(f"📝 Analysing: {title}")
+            live_lines.append(tr("📝 Evaluating: {title}", title=title))
             _update_ready.set()
         elif phase == "harvest_done":
             progress_md += _format_progress(phase, data)
             live_lines.append(
-                f"✅ **Round {data.get('round', '?')}:** "
-                f"{data.get('total_sources', '?')} sources, "
-                f"{data.get('total_extracts', '?')} extracts"
+                tr("✅ **Round {round}:** {sources} sources, {extracts} extracts",
+                   round=data.get('round', '?'),
+                   sources=data.get('total_sources', '?'),
+                   extracts=data.get('total_extracts', '?'))
             )
             _update_ready.set()
         elif phase == "gaps":
             progress_md += _format_progress(phase, data)
             if hasattr(data, "should_continue") and data.should_continue:
-                live_lines.append("🔎 Gaps found — another round...")
+                live_lines.append(tr("🔎 Gaps found — another round..."))
             else:
                 live_lines.append(
-                    "📊 Research complete — writing the report..."
+                    tr("📊 Research complete — writing the report...")
                 )
             _update_ready.set()
         elif phase == "report_stream":
@@ -795,7 +816,7 @@ async def _drive_research_pipeline(
             display_md = report_md
         else:
             display_md = (
-                "## 🔍 Research running...\n\n"
+                tr("## 🔍 Research running...\n\n")
                 + "\n\n".join(live_lines[-15:])
             )
 
@@ -804,7 +825,7 @@ async def _drive_research_pipeline(
                gr.update(visible=True), gr.update(visible=True),
                display_md,
                _format_sources_log([], fetch_updates) if fetch_updates else "",
-               progress_md or "⏳ Running...",
+               progress_md or tr("⏳ Running..."),
                "")
 
     # Finalise on error or success
@@ -813,9 +834,8 @@ async def _drive_research_pipeline(
             f"Pipeline error: {pipeline_error}", exc_info=pipeline_error
         )
         error_msg = (
-            f"⚠️ **Research failed**\n\n"
-            f"Error: {str(pipeline_error)[:300]}\n\n"
-            f"*Please try again.*"
+            tr("⚠️ **Research failed**\n\nError: {error}\n\n*Please try again.*",
+               error=str(pipeline_error)[:300])
         )
         chatbot_new = list(chatbot[:-1]) if chatbot else []
         chatbot_new.append({"role": "assistant", "content": error_msg})
@@ -823,7 +843,7 @@ async def _drive_research_pipeline(
         yield (app_state, chatbot_new,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               f"⚠️ Error: {str(pipeline_error)[:200]}",
+               tr("⚠️ Error: {error}", error=str(pipeline_error)[:200]),
                "", progress_md or "", "")
         return
 
@@ -834,7 +854,7 @@ async def _drive_research_pipeline(
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               "⚠️ The research returned no result.", "", "", "")
+               tr("⚠️ The research returned no result."), "", "", "")
         return
 
     # Formatting
@@ -842,16 +862,16 @@ async def _drive_research_pipeline(
         sources_md = _format_sources_log(ctx.sources, fetch_updates)
     except Exception as e:
         logger.warning(f"Formatting the sources failed: {e}")
-        sources_md = f"⚠️ Formatting error: {e}"
+        sources_md = tr("⚠️ Formatting error: {error}", error=e)
 
     try:
         extracts_md = _format_extracts(ctx.harvest_results, ctx.research_plan)
     except Exception as e:
         logger.warning(f"Formatting the extracts failed: {e}")
-        extracts_md = f"⚠️ Formatting error: {e}"
+        extracts_md = tr("⚠️ Formatting error: {error}", error=e)
 
     if not report_md:
-        report_md = ctx.final_report or "*No report generated.*"
+        report_md = ctx.final_report or tr("*No report created.*")
 
     # Finalisation
     chatbot_new = list(chatbot[:-1]) if chatbot else []
@@ -868,16 +888,16 @@ async def _drive_research_pipeline(
                 lang_names.get(l, l)
                 for l in ctx.search_stats["languages"]
             )
-            search_langs_info = f"- Search languages: {flags}\n"
+            search_langs_info = tr("- Search languages: {flags}\n", flags=flags)
 
         summary_msg = (
-            f"✅ **Research completed**\n\n"
-            f"- {len(ctx.sources)} sources searched\n"
-            f"- {len(ctx.extracts)} facts extracted\n"
-            f"- {ctx.rounds_completed} research rounds\n"
-            f"{search_langs_info}"
-            f"- Duration: {ctx.duration_seconds:.0f} seconds\n\n"
-            f"*The result is in the “Report” tab on the right, the export at the top of the result area →*"
+            tr("✅ **Research complete**\n\n")
+            + tr("- {n} sources searched\n", n=len(ctx.sources))
+            + tr("- {n} facts extracted\n", n=len(ctx.extracts))
+            + tr("- {n} research rounds\n", n=ctx.rounds_completed)
+            + search_langs_info
+            + tr("- Duration: {n} seconds\n\n", n=f"{ctx.duration_seconds:.0f}")
+            + tr("*The result is in the “Report” tab on the right, the export at the top of the result area →*")
         )
         chatbot_new.append({"role": "assistant", "content": summary_msg})
         app_state.chat_history.append(
@@ -897,7 +917,7 @@ async def _drive_research_pipeline(
         app_state.current_research = ctx
         chatbot_new.append({
             "role": "assistant",
-            "content": f"✅ Research completed (with warnings: {e})",
+            "content": tr("✅ Research complete (with warnings: {error})", error=e),
         })
 
     app_state.research_running = False
@@ -989,12 +1009,13 @@ async def run_research(app_state: AppState, msg: dict, chatbot: list,
             if not content or any(content.startswith(p) for p in ("🔍", "✅", "⏳", "🤔")):
                 continue
             text = content
-            role = "assistant answer" if m["role"] == "assistant" else "message"
-            gr.Info(f"📋 Using the last {role} as the research request")
+            gr.Info(tr("📋 Using the last assistant answer as the research request")
+                    if m["role"] == "assistant"
+                    else tr("📋 Using the last message as the research request"))
             break
 
     if not text:
-        gr.Warning("Please enter a research request.")
+        gr.Warning(tr("Please enter a research request."))
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=False), gr.update(visible=True),
@@ -1013,10 +1034,10 @@ async def run_research(app_state: AppState, msg: dict, chatbot: list,
     if searxng and hasattr(searxng, 'check_connectivity'):
         available = await searxng.check_connectivity()
         if not available:
-            warnings.append("⚠️ **SearXNG unreachable** — web search disabled")
+            warnings.append(tr("⚠️ **SearXNG not reachable** — web search disabled"))
     github = app_state.connectors.get_connector_by_name("github")
     if github and hasattr(github, '_has_token') and not github._has_token:
-        warnings.append("⚠️ **GitHub without a token** — heavily limited API access (60/h)")
+        warnings.append(tr("⚠️ **GitHub without a token** — heavily limited API access (60/h)"))
 
     # Solr: verify the fields on the first run
     if _shared_solr and hasattr(_shared_solr, 'verify_fields'):
@@ -1026,9 +1047,10 @@ async def run_research(app_state: AppState, msg: dict, chatbot: list,
                 _shared_solr._fields_verified = True
                 if not result.get("ok") and result.get("missing"):
                     warnings.append(
-                        f"⚠️ **Solr:** fields missing in the index: "
-                        f"{', '.join(result['missing'])}. "
-                        f"Available: {', '.join(result.get('available', [])[:10])}"
+                        tr("⚠️ **Solr:** fields missing from the index: {missing}. "
+                           "Available: {available}",
+                           missing=', '.join(result['missing']),
+                           available=', '.join(result.get('available', [])[:10]))
                     )
             except Exception as e:
                 logger.warning(f"Solr field check: {e}")
@@ -1040,14 +1062,15 @@ async def run_research(app_state: AppState, msg: dict, chatbot: list,
         except Exception as e:
             logger.warning(f"Person directory: consent clean-up failed: {e}")
 
-    mode_labels = {
-        "institution": f"🏛️ **{get_profile().label} research started...**",
-        "web": "🔍 **Research started...**",
-    }
-    status_msg = mode_labels.get(mode, "🔍 **Research started...**")
+    if mode == "institution":
+        status_msg = tr("🏛️ **{institution} research started...**",
+                        institution=get_profile().label)
+    else:
+        status_msg = tr("🔍 **Research started...**")
     if institution_only and mode == "institution":
-        status_msg = (f"🏛️ **{get_profile().label} research started "
-                      f"(institution sources only)...**")
+        status_msg = tr("🏛️ **{institution} research started "
+                        "(institution sources only)...**",
+                        institution=get_profile().label)
     if warnings:
         status_msg += "\n\n" + "\n".join(warnings)
     chatbot.append({"role": "assistant", "content": status_msg})
@@ -1059,7 +1082,7 @@ async def run_research(app_state: AppState, msg: dict, chatbot: list,
            gr.update(visible=False), gr.update(visible=True),  # send hidden, stop visible
            gr.update(visible=True),    # result panel
            gr.update(visible=True),    # research btn disabled
-           "⏳ *Preparing the research...*", "", "", "")
+           tr("⏳ *Preparing the research...*"), "", "", "")
 
     # Create a NEW orchestrator per research run
     # (isolates _seen_urls, _stop_requested, _use_directory per session)
@@ -1102,37 +1125,37 @@ async def run_research(app_state: AppState, msg: dict, chatbot: list,
         chatbot = list(chatbot[:-1]) if chatbot else []
         chatbot.append({
             "role": "assistant",
-            "content": f"❌ Building the plan failed: {e}",
+            "content": tr("❌ Building the plan failed: {error}", error=e),
         })
         app_state.research_running = False
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               f"❌ Building the plan failed: {e}", "", "", "")
+               tr("❌ Building the plan failed: {error}", error=e), "", "", "")
         return
 
     if (plan_ctx is None
             or plan_ctx.status == "error"
             or not plan_ctx.research_plan):
         err = (
-            plan_ctx.error_message if plan_ctx else "unknown error"
+            plan_ctx.error_message if plan_ctx else tr("unknown error")
         )
         chatbot = list(chatbot[:-1]) if chatbot else []
         chatbot.append({
             "role": "assistant",
-            "content": f"⚠️ Building the plan gave no result: {err}",
+            "content": tr("⚠️ Building the plan returned no result: {error}", error=err),
         })
         app_state.research_running = False
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               f"⚠️ **Building the plan gave no result**\n\n{err}",
+               tr("⚠️ **Building the plan returned no result**\n\n{error}", error=err),
                "", "", "")
         return
 
     # ── Gate decision ──
-    mode_label = (f"{get_profile().label} research" if mode == "institution"
-                  else "Web research")
+    mode_label = (tr("{institution} research", institution=get_profile().label)
+                  if mode == "institution" else tr("Web research"))
 
     if show_gate and should_show_research_preview(plan_ctx.research_plan):
         # Show the gate: store the state, render the plan in the chatbot, end
@@ -1153,17 +1176,16 @@ async def run_research(app_state: AppState, msg: dict, chatbot: list,
         chatbot.append({
             "role": "assistant",
             "content": (
-                f"🔍 **{mode_label} — plan preview**\n\n"
-                f"{plan_md_text}\n\n"
-                f"---\n\n"
-                f"👇 **Please confirm the plan below to continue.**"
+                tr("🔍 **{label} — plan preview**\n\n", label=mode_label)
+                + f"{plan_md_text}\n\n---\n\n"
+                + tr("👇 **Please confirm the plan below to continue.**")
             ),
         })
         app_state.research_running = False
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               "⏸️ *Plan preview — waiting for confirmation*",
+               tr("⏸️ *Plan preview — waiting for confirmation*"),
                "", "", "")
         return
 
@@ -1243,7 +1265,7 @@ async def run_explainer_pipeline(
     # Preflight validation (before the pipeline runs)
     ok, error_msg = validate_explainer_inputs(topic, audience, length, purpose)
     if not ok:
-        gr.Warning(f"In-depth explanation: {error_msg}")
+        gr.Warning(tr("In-depth explanation: {error}", error=error_msg))
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=False), gr.update(visible=True),
@@ -1259,28 +1281,28 @@ async def run_explainer_pipeline(
     chatbot = list(chatbot or [])
     chatbot.append({
         "role": "user",
-        "content": f"📖 *In-depth explanation:* {topic_clean}",
+        "content": tr("📖 *In-depth explanation:* {topic}", topic=topic_clean),
     })
     chatbot.append({
         "role": "assistant",
-        "content": "📖 **Writing the in-depth explanation...**",
+        "content": tr("📖 **Writing the in-depth explanation...**"),
     })
     app_state.chat_history.append(
-        {"role": "user", "content": f"In-depth explanation: {topic_clean}"}
+        {"role": "user", "content": tr("In-depth explanation: {topic}", topic=topic_clean)}
     )
     app_state.research_running = True
 
     yield (app_state, chatbot,
            gr.update(visible=False), gr.update(visible=True),
            gr.update(visible=True), gr.update(visible=True),
-           "⏳ *Preparing the in-depth explanation...*", "", "", "")
+           tr("⏳ *Preparing the in-depth explanation...*"), "", "", "")
 
     # Progress-Handling
-    progress_md = f"# In-depth explanation: {topic_clean}\n\n"
-    progress_md += f"**Audience:** {audience}\n"
-    progress_md += f"**Length:** {length}\n\n"
+    progress_md = tr("# In-depth explanation: {topic}\n\n", topic=topic_clean)
+    progress_md += tr("**Audience:** {audience}\n", audience=audience)
+    progress_md += tr("**Length:** {length}\n\n", length=length)
     progress_md += "---\n\n"
-    report_md = "⏳ *Decomposition running...*"
+    report_md = tr("⏳ *Breaking down the task...*")
     live_lines: list[str] = []
     _update_ready = asyncio.Event()
 
@@ -1347,8 +1369,8 @@ async def run_explainer_pipeline(
         # Live report in the report tab: last lines
         if live_lines:
             report_md = (
-                f"# In-depth explanation: {topic_clean}\n\n"
-                f"*Running...*\n\n"
+                tr("# In-depth explanation: {topic}\n\n", topic=topic_clean)
+                + tr("*Running...*\n\n")
                 + "\n".join(live_lines[-20:])
             )
 
@@ -1364,29 +1386,29 @@ async def run_explainer_pipeline(
 
     if pipeline_error:
         final_report = (
-            f"❌ **Error:** {pipeline_error}\n\n"
-            f"Details in the “History” tab."
+            tr("❌ **Error:** {error}\n\nDetails in the “History” tab.",
+               error=pipeline_error)
         )
         ChatState(chatbot).replace_last_assistant(
-            f"❌ Error in the in-depth explanation: {pipeline_error}",
+            tr("❌ Error in the in-depth explanation: {error}", error=pipeline_error),
         )
     elif pipeline_ctx and pipeline_ctx.status == "done":
-        final_report = pipeline_ctx.final_report or "(no result)"
+        final_report = pipeline_ctx.final_report or tr("(no result)")
         # Append the filter statistics banner
         final_report = _append_filter_stats_banner(final_report, pipeline_ctx)
         # Session persistence (same name as for research)
         app_state.current_research = pipeline_ctx
         ChatState(chatbot).replace_last_assistant(
             (
-                f"✅ **In-depth explanation finished**: {topic_clean}\n\n"
-                f"See the result panel for the full text."
+                tr("✅ **In-depth explanation done**: {topic}\n\n"
+                   "The full text is in the result area.", topic=topic_clean)
             ),
         )
     else:
-        err = pipeline_ctx.error_message if pipeline_ctx else "unknown"
-        final_report = f"⚠️ **Pipeline finished without a result**\n\n{err}"
+        err = pipeline_ctx.error_message if pipeline_ctx else tr("unknown")
+        final_report = tr("⚠️ **Pipeline ended without a result**\n\n{error}", error=err)
         ChatState(chatbot).replace_last_assistant(
-            f"⚠️ Pipeline finished: {err}",
+            tr("⚠️ Pipeline ended: {error}", error=err),
         )
 
     yield (app_state, chatbot,
@@ -1427,7 +1449,7 @@ async def _drive_analysis_execution(
 
     # Progress setup
     progress_md = f"# {label}: {short_summary}\n\n---\n\n"
-    report_md = f"⏳ *{label} running...*"
+    report_md = tr("⏳ *{label} running...*", label=label)
     live_lines: list[str] = []
     _update_ready = asyncio.Event()
 
@@ -1471,7 +1493,7 @@ async def _drive_analysis_execution(
 
         if live_lines:
             report_md = (
-                f"# {label}: {short_summary}\n\n*Running...*\n\n"
+                f"# {label}: {short_summary}\n\n" + tr("*Running...*\n\n")
                 + "\n".join(live_lines[-20:])
             )
         yield (app_state, chatbot,
@@ -1484,27 +1506,28 @@ async def _drive_analysis_execution(
 
     if pipeline_error:
         final_report = (
-            f"❌ **Error:** {pipeline_error}\n\nDetails in the “History” tab."
+            tr("❌ **Error:** {error}\n\nDetails in the “History” tab.",
+               error=pipeline_error)
         )
         ChatState(chatbot).replace_last_assistant(
-            f"❌ Error in {label}: {pipeline_error}",
+            tr("❌ Error in {label}: {error}", label=label, error=pipeline_error),
         )
     elif pipeline_ctx and pipeline_ctx.status == "done":
-        final_report = pipeline_ctx.final_report or "(no result)"
+        final_report = pipeline_ctx.final_report or tr("(no result)")
         # Append the filter statistics banner — filter losses must be visible
         final_report = _append_filter_stats_banner(final_report, pipeline_ctx)
         app_state.current_research = pipeline_ctx
         ChatState(chatbot).replace_last_assistant(
             (
-                f"✅ **{label} finished**\n\n"
-                f"See the result panel for the full report."
+                tr("✅ **{label} done**\n\nThe full report is in the result area.",
+                   label=label)
             ),
         )
     else:
-        err = pipeline_ctx.error_message if pipeline_ctx else "unknown"
-        final_report = f"⚠️ **Pipeline finished without a result**\n\n{err}"
+        err = pipeline_ctx.error_message if pipeline_ctx else tr("unknown")
+        final_report = tr("⚠️ **Pipeline ended without a result**\n\n{error}", error=err)
         ChatState(chatbot).replace_last_assistant(
-            f"⚠️ Pipeline finished: {err}",
+            tr("⚠️ Pipeline ended: {error}", error=err),
         )
 
     yield (app_state, chatbot,
@@ -1540,7 +1563,7 @@ async def run_analysis_pipeline_generic(
 
     # Get the use case and its inputs
     if use_case not in USE_CASE_REGISTRY:
-        gr.Warning(f"Unknown use case: {use_case}")
+        gr.Warning(tr("Unknown mode: {mode}", mode=use_case))
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=False), gr.update(visible=True),
@@ -1563,11 +1586,11 @@ async def run_analysis_pipeline_generic(
         app_state.autofill_note = ""
         chatbot = list(chatbot) + [{"role": "assistant", "content": note}]
         if pending > 0:
-            gr.Info(f"{pending} field(s) pre-filled from the chat — "
-                    "please review and start again.")
+            gr.Info(tr("{n} field(s) pre-filled from the chat — "
+                       "please review and start again.", n=pending))
         else:
-            gr.Warning("The mandatory fields could not be derived "
-                       "from the chat.")
+            gr.Warning(tr("The mandatory fields could not be derived "
+                          "from the chat."))
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=False), gr.update(visible=True),
@@ -1584,7 +1607,7 @@ async def run_analysis_pipeline_generic(
     try:
         ok, errors = checker.validate(inputs)
     except Exception as e:
-        ok, errors = False, [f"Validation error: {e}"]
+        ok, errors = False, [tr("Validation error: {error}", error=e)]
 
     if not ok:
         gr.Warning(
@@ -1600,7 +1623,8 @@ async def run_analysis_pipeline_generic(
     try:
         preflight_data = checker.normalize(inputs)
     except Exception as e:
-        gr.Warning(f"{_use_case_label(use_case)}: input error: {e}")
+        gr.Warning(tr("{label}: input error: {error}",
+                      label=_use_case_label(use_case), error=e))
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=False), gr.update(visible=True),
@@ -1620,7 +1644,7 @@ async def run_analysis_pipeline_generic(
     })
     chatbot.append({
         "role": "assistant",
-        "content": f"{icon} **{label} running...**",
+        "content": f"{icon} " + tr("**{label} running...**", label=label),
     })
     app_state.chat_history.append(
         {"role": "user", "content": f"{label}: {short_summary}"}
@@ -1630,7 +1654,7 @@ async def run_analysis_pipeline_generic(
     yield (app_state, chatbot,
            gr.update(visible=False), gr.update(visible=True),
            gr.update(visible=True), gr.update(visible=True),
-           f"⏳ *Preparing {label}...*", "", "", "")
+           tr("⏳ *Preparing {label}...*", label=label), "", "", "")
 
     # Orchestrator instance
     run_orchestrator = ResearchOrchestrator(
@@ -1669,25 +1693,25 @@ async def run_analysis_pipeline_generic(
         logger.exception(f"{label} plan build failed")
         plan_ctx = None
         ChatState(chatbot).replace_last_assistant(
-            f"❌ Error while building the plan: {e}",
+            tr("❌ Error while building the plan: {error}", error=e),
         )
         app_state.research_running = False
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               f"❌ Building the plan failed: {e}", "", "", "")
+               tr("❌ Building the plan failed: {error}", error=e), "", "", "")
         return
 
     if plan_ctx is None or plan_ctx.status == "error" or not plan_ctx.task_plan:
-        err = (plan_ctx.error_message if plan_ctx else "unknown error")
+        err = (plan_ctx.error_message if plan_ctx else tr("unknown error"))
         ChatState(chatbot).replace_last_assistant(
-            f"⚠️ Plan build ended without a plan: {err}",
+            tr("⚠️ Planning ended without a plan: {error}", error=err),
         )
         app_state.research_running = False
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               f"⚠️ **Building the plan gave no result**\n\n{err}",
+               tr("⚠️ **Building the plan returned no result**\n\n{error}", error=err),
                "", "", "")
         return
 
@@ -1714,10 +1738,9 @@ async def run_analysis_pipeline_generic(
         plan_md_text = format_task_plan_markdown(plan_ctx.task_plan)
         ChatState(chatbot).replace_last_assistant(
             (
-                f"{icon} **{label} — plan preview**\n\n"
-                f"{plan_md_text}\n\n"
-                f"---\n\n"
-                f"👇 **Please confirm the plan below to continue.**"
+                f"{icon} " + tr("**{label} — plan preview**\n\n", label=label)
+                + f"{plan_md_text}\n\n---\n\n"
+                + tr("👇 **Please confirm the plan below to continue.**")
             ),
         )
         app_state.research_running = False
@@ -1726,7 +1749,7 @@ async def run_analysis_pipeline_generic(
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               "⏸️ *Plan preview — waiting for confirmation*",
+               tr("⏸️ *Plan preview — waiting for confirmation*"),
                "", "", "")
         return
 
@@ -1838,16 +1861,16 @@ async def confirm_plan_and_run(
         chatbot = list(chatbot or [])
         ChatState(chatbot).replace_last_assistant(
             (
-                    f"🔄 **Search queries changed** — repeating the literature search "
-                    f"with {len(edited_queries)} new queries..."
-                ),
+                tr("🔄 **Search queries changed** — repeating the literature "
+                   "search with {n} new queries...", n=len(edited_queries))
+            ),
             append_if_missing=False,
         )
 
         yield (app_state, chatbot,
                gr.update(visible=False), gr.update(visible=True),
                gr.update(visible=True), gr.update(visible=True),
-               "🔄 *Repeating the literature search with new queries...*",
+               tr("🔄 *Repeating the literature search with new queries...*"),
                "", "", "")
 
         # Run the plan build again with the new queries
@@ -1876,24 +1899,24 @@ async def confirm_plan_and_run(
         except Exception as e:
             logger.exception("Rebuild with new queries failed")
             ChatState(chatbot).replace_last_assistant(
-                f"❌ Error in the repeated literature search: {e}",
+                tr("❌ Error in the repeated literature search: {error}", error=e),
             )
             app_state.research_running = False
             yield (app_state, chatbot,
                    gr.update(visible=True), gr.update(visible=False),
                    gr.update(visible=False), gr.update(visible=True),
-                   f"❌ Rebuild failed: {e}", "", "", "")
+                   tr("❌ Rebuild failed: {error}", error=e), "", "", "")
             return
 
         if ctx is None or not getattr(ctx, "task_plan", None):
             ChatState(chatbot).replace_last_assistant(
-                "⚠️ The repeated literature search produced no plan.",
+                tr("⚠️ The repeated literature search produced no plan."),
             )
             app_state.research_running = False
             yield (app_state, chatbot,
                    gr.update(visible=True), gr.update(visible=False),
                    gr.update(visible=False), gr.update(visible=True),
-                   "⚠️ Rebuild without a result", "", "", "")
+                   tr("⚠️ Rebuild without result"), "", "", "")
             return
 
     # From here on: the normal confirm flow.
@@ -1903,19 +1926,19 @@ async def confirm_plan_and_run(
     icon = "🔍" if is_research_mode else _use_case_icon(use_case)
 
     # Short description for the chat message
-    short_summary = ctx.query or label or ("Research" if is_research_mode else "Analysis")
+    short_summary = ctx.query or label or (tr("Research") if is_research_mode else tr("Analysis"))
 
     # Update the chat message — the "plan preview" entry is replaced by
     # the running status
     ChatState(chatbot).replace_last_assistant(
-        f"{icon} **{label} running...** (plan confirmed)",
+        f"{icon} " + tr("**{label} running...** (plan confirmed)", label=label),
         append_if_missing=False,
     )
 
     yield (app_state, chatbot,
            gr.update(visible=False), gr.update(visible=True),
            gr.update(visible=True), gr.update(visible=True),
-           f"⏳ *{label} running...*", "", "", "")
+           tr("⏳ *{label} running...*", label=label), "", "", "")
 
     # The user confirmed the plan: recorded in the report footer.
     ctx.plan_confirmed = True
@@ -1991,7 +2014,7 @@ async def cancel_pending_plan(app_state: AppState, chatbot: list):
     app_state = _get_ready_state(app_state)
 
     was_pending = app_state.pending_plan_ctx is not None
-    label = app_state.pending_plan_label or "Analysis"
+    label = app_state.pending_plan_label or tr("Analysis")
 
     app_state.pending_plan_ctx = None
     app_state.pending_plan_use_case = None
@@ -2003,7 +2026,7 @@ async def cancel_pending_plan(app_state: AppState, chatbot: list):
     chatbot = list(chatbot or [])
     if was_pending:
         ChatState(chatbot).replace_last_assistant(
-            f"✖ **{label} cancelled** (plan not confirmed)",
+            tr("✖ **{label} cancelled** (plan not confirmed)", label=label),
             append_if_missing=False,
         )
 
@@ -2118,12 +2141,13 @@ def _hide_gate_after_run():
 
 def _use_case_label(use_case: str) -> str:
     return {
-        "peer_review": "Peer Review",
-        "decision_analysis": "Decision analysis",
-        "research_design": "Research design",
-        "grant_proposal": "Grant proposal",
-        "literature_review": "Literature Review",
-        "explainer": "In-depth explanation",
+        "peer_review": tr("Peer review"),
+        "decision_analysis": tr("Decision analysis"),
+        "research_design": tr("Research design"),
+        "grant_proposal": tr("Grant proposal"),
+        "literature_review": tr("Literature review"),
+        "literature_finder": tr("Find literature"),
+        "explainer": tr("In-depth explanation"),
     }.get(use_case, use_case)
 
 
@@ -2157,7 +2181,7 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
         text = "\n\n".join(doc_parts)
 
     if not text:
-        gr.Warning("Please enter a bibliography (text or file upload).")
+        gr.Warning(tr("Please enter a bibliography (text or file upload)."))
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=False), gr.update(visible=True),
@@ -2167,14 +2191,16 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
     # Chat message
     chatbot = list(chatbot or [])
     short_preview = text[:200].replace('\n', ' ')
-    chatbot.append({"role": "user", "content": f"📚 *Literature check:* {short_preview}..."})
-    chatbot.append({"role": "assistant", "content": "📚 **Literature check started...**"})
+    chatbot.append({"role": "user",
+                    "content": tr("📚 *Reference check:* {preview}...", preview=short_preview)})
+    chatbot.append({"role": "assistant",
+                    "content": tr("📚 **Reference check started...**")})
     app_state.research_running = True
 
     yield (app_state, chatbot,
            gr.update(visible=False), gr.update(visible=True),
            gr.update(visible=True), gr.update(visible=True),
-           "⏳ *Preparing the literature check...*", "", "", "")
+           tr("⏳ *Preparing the reference check...*"), "", "", "")
 
     # Progress
     progress_md = ""
@@ -2235,12 +2261,13 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
         if report_md:
             display_md = report_md
         else:
-            display_md = "## 📚 Literature check running...\n\n" + "\n\n".join(live_lines[-15:])
+            display_md = (tr("## 📚 Reference check running...\n\n")
+                          + "\n\n".join(live_lines[-15:]))
 
         yield (app_state, chatbot,
                gr.update(visible=False), gr.update(visible=True),
                gr.update(visible=True), gr.update(visible=True),
-               display_md, "", progress_md or "⏳ Running...", "")
+               display_md, "", progress_md or tr("⏳ Running..."), "")
 
     # Result
     if pipeline_error:
@@ -2248,12 +2275,13 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
                       exc_info=pipeline_error)
         chatbot = list(chatbot[:-1])
         chatbot.append({"role": "assistant",
-                        "content": f"⚠️ Literature check failed: {pipeline_error}"})
+                        "content": tr("⚠️ Reference check failed: {error}",
+                                      error=pipeline_error)})
         app_state.research_running = False
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               f"⚠️ Error: {pipeline_error}", "", progress_md, "")
+               tr("⚠️ Error: {error}", error=pipeline_error), "", progress_md, "")
         return
 
     if not pipeline_result:
@@ -2261,7 +2289,7 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
         yield (app_state, chatbot,
                gr.update(visible=True), gr.update(visible=False),
                gr.update(visible=True), gr.update(visible=True),
-               report_md or "⚠️ No result.", "", progress_md, "")
+               report_md or tr("⚠️ No result."), "", progress_md, "")
         return
 
     report_text, report_data = pipeline_result
@@ -2270,13 +2298,13 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
     if not report_data:
         report_data = LiteratureReport()
     if not report_text:
-        report_text = report_md or "*No report generated.*"
+        report_text = report_md or tr("*No report created.*")
 
     # ── Sources tab: which APIs were queried? ──
-    sources_md = "## 🔗 Databases queried\n\n"
+    sources_md = tr("## 🔗 Databases queried\n\n")
     sources_md += (
-        "| # | Entry | arXiv | CrossRef | OpenAlex | Sem.Scholar | DBLP | Hits |\n"
-        "|---|-------|-------|----------|----------|-------------|------|------|\n"
+        tr("| # | Entry | arXiv | CrossRef | OpenAlex | Sem.Scholar | DBLP | Matches |")
+        + "\n|---|---------|-------|----------|----------|-------------|------|---------|\n"
     )
     for entry in report_data.entries:
         short = f"{str(entry.authors[0]).split(',')[0] if entry.authors else '?'} ({entry.year})"
@@ -2294,10 +2322,10 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
             f"| {_icon('Semantic Scholar')} | {_icon('DBLP')} "
             f"| {len(entry.api_matches)} |\n"
         )
-    sources_md += "\n✅ = hit, ❌ = searched/not found, — = not queried\n"
+    sources_md += tr("\n✅ = match, ❌ = searched/not found, — = not queried\n")
 
     # Links to the entries found
-    sources_md += "\n### URLs found\n\n"
+    sources_md += tr("\n### URLs found\n\n")
     for entry in report_data.entries:
         for match in entry.api_matches:
             url = match.get("url", "")
@@ -2305,7 +2333,7 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
                 sources_md += f"- **{match['source']}**: [{entry.title[:60]}...]({url})\n"
 
     # ── Extracts tab: detailed API matches ──
-    extracts_md = "## 📝 API data per entry\n\n"
+    extracts_md = tr("## 📝 API data per entry\n\n")
     for entry in report_data.entries:
         status_icon = {"verified": "✅", "url_verified": "🟡",
                        "deviations": "⚠️",
@@ -2314,20 +2342,21 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
             f"### {entry.id}. {str(entry.authors[0]) if entry.authors else '?'} "
             f"({entry.year}) {status_icon}\n\n"
         )
-        extracts_md += f"**Title:** {entry.title}\n\n"
+        extracts_md += tr("**Title:** {title}\n\n", title=entry.title)
 
         if entry.api_matches:
             for match in entry.api_matches:
                 extracts_md += f"**{match['source']}:**\n"
-                extracts_md += f"- Title: {match.get('title', '—')}\n"
+                extracts_md += tr("- Title: {title}\n", title=match.get('title', '—'))
                 m_authors = match.get('authors', [])
                 if isinstance(m_authors, list):
-                    extracts_md += f"- Authors: {', '.join(str(a) for a in m_authors[:5])}"
+                    extracts_md += tr("- Authors: {authors}", authors=', '.join(
+                        str(a) for a in m_authors[:5]))
                     if len(m_authors) > 5:
-                        extracts_md += f" (+{len(m_authors)-5} more)"
+                        extracts_md += tr(" (+{n} more)", n=len(m_authors) - 5)
                     extracts_md += "\n"
-                extracts_md += f"- Year: {match.get('year', '—')}\n"
-                extracts_md += f"- Journal: {match.get('journal', '—')}\n"
+                extracts_md += tr("- Year: {year}\n", year=match.get('year', '—'))
+                extracts_md += tr("- Journal: {journal}\n", journal=match.get('journal', '—'))
                 if match.get('doi'):
                     extracts_md += f"- DOI: {match.get('doi')}\n"
                 if match.get('url'):
@@ -2335,7 +2364,7 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
                 extracts_md += "\n"
 
         if entry.deviations:
-            extracts_md += "**Deviations:**\n"
+            extracts_md += tr("**Deviations:**\n")
             for dev in entry.deviations:
                 conf = dev.get("confidence", "")
                 conf_tag = f" ({conf})" if conf else ""
@@ -2343,31 +2372,32 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
             extracts_md += "\n"
 
         if entry.notes:
-            extracts_md += f"**Notes:** {'; '.join(entry.notes)}\n\n"
+            extracts_md += tr("**Notes:** {notes}\n\n", notes='; '.join(entry.notes))
 
         extracts_md += "---\n\n"
 
     # ── Chat summary ──
     url_v = sum(1 for e in report_data.entries if e.status == "url_verified")
     summary_lines = [
-        "✅ **Literature check completed**\n",
-        f"- {report_data.total} {'entry' if report_data.total == 1 else 'entries'} checked",
-        f"- {report_data.verified} verified (database) ✅",
+        tr("✅ **Reference check complete**\n"),
+        (tr("- {n} entry checked", n=report_data.total) if report_data.total == 1
+         else tr("- {n} entries checked", n=report_data.total)),
+        tr("- {n} verified (database) ✅", n=report_data.verified),
     ]
     if url_v:
-        summary_lines.append(f"- {url_v} URL confirmed (fields not checked) 🟡")
+        summary_lines.append(tr("- {n} verified via URL (fields not checked) 🟡", n=url_v))
     summary_lines.extend([
-        f"- {report_data.with_deviations} with deviations ⚠️",
-        f"- {report_data.not_found} not found ❌",
+        tr("- {n} with deviations ⚠️", n=report_data.with_deviations),
+        tr("- {n} not found ❌", n=report_data.not_found),
         "",
-        "*The result is in the “Report” tab on the right, the export at the top of the result area.*",
+        tr("*The result is in the “Report” tab on the right, the export at the top of the result area.*"),
     ])
     summary = "\n".join(summary_lines)
     chatbot = list(chatbot[:-1])
     chatbot.append({"role": "assistant", "content": summary})
 
     # Minimal research object for the Word/Markdown export
-    ctx = HarvestContext(query=f"Literature check ({report_data.total} entries)")
+    ctx = HarvestContext(query=tr("Reference check ({n} entries)", n=report_data.total))
     # Full report with appendices for the Word export
     ctx.final_report = (
         (report_text or "")
@@ -2377,7 +2407,7 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
         + extracts_md
     )
     ctx.output_schema = OutputSchema(
-        title="Bibliography check report",
+        title=tr("Reference check report"),
         format_type="literature_check",
         style="academic",
     )
@@ -2398,7 +2428,7 @@ async def run_literature_check(app_state: AppState, msg: dict, chatbot: list,
     yield (app_state, chatbot,
            gr.update(visible=True), gr.update(visible=False),
            gr.update(visible=True), gr.update(visible=True),
-           report_text or "*No report.*",
+           report_text or tr("*No report.*"),
            sources_md, progress_md, extracts_md)
 
 
@@ -2415,52 +2445,52 @@ def toggle_result_panel(app_state: AppState):
 
 
 def _welcome_message() -> dict:
-    """Welcome message (built at call time: depends on the institution profile)."""
+    """Welcome message (built at call time: depends on the institution profile
+    and the interface language)."""
+    paragraphs = [
+        tr("👋 Welcome to **{tool}**", tool=TOOL_NAME),
+        tr("Choose a mode below, enter your request and click "
+           "**🔍 Start research**. For web research you can sharpen your "
+           "request with me first via **💬 Discuss request**."),
+        "---",
+        tr("### 🔎 Research modes"),
+        tr("**🌐 Web research** — general online search with an autonomous "
+           "pipeline. Delivers a report with sources. Good for current "
+           "topics, market information and general knowledge."),
+        _institution_help_text(),
+        tr("**📚 Check references** — checks existing bibliographies entry by "
+           "entry against CrossRef, OpenAlex and further databases. Finds "
+           "errors and adds DOIs. Good before submitting a manuscript."),
+        tr("**📑 Find literature** — searches OpenAlex, Semantic Scholar and "
+           "arXiv for your research question, assesses the hits against "
+           "inclusion criteria and lists the selection with full "
+           "bibliographic details. Good for a first overview before a "
+           "literature review."),
+        "---",
+        tr("### 🧠 Analysis modes"),
+        tr("**📖 In-depth explanation** — explains a topic for a specific "
+           "audience with a structured build-up. Good for teaching "
+           "preparation or getting into new fields."),
+        tr("**🔍 Peer review** — writes a structured review of a paper, "
+           "aspect by aspect. Good for journal and conference reviews and "
+           "for theses."),
+        tr("**⚖️ Decision analysis** — structured multi-criteria analysis of "
+           "2–8 options against your criteria. Good for technology choices "
+           "and strategic decisions."),
+        tr("**🔬 Research design** — develops a methodological research design "
+           "from a research question: literature gap, hypotheses, method, "
+           "limitations. Good for project conception and proposal outlines."),
+        tr("**💰 Grant proposal** — proposal draft with a real literature "
+           "search for the state of research, work plan and coherence check. "
+           "Good for proposals in the concept phase."),
+        tr("**📚 Literature review** — literature review based on a real "
+           "literature search (with citation chasing, i.e. backward and "
+           "forward search via citations): a synthesis per key question and "
+           "a meta-synthesis. Good for thesis chapters and review articles."),
+    ]
     return {
         "role": "assistant",
-        "content": (
-            f"👋 Welcome to **{TOOL_NAME}**\n\n"
-            "Choose a mode from the dropdown below, enter your input "
-            "and click **🔍 Start research**. For web research you can "
-            "sharpen your request with me first via **💬 Discuss the request** "
-            "before starting.\n\n"
-            "---\n\n"
-            "### 🔎 Research modes\n\n"
-            "**🌐 Web research** — general online search with an autonomous "
-            "pipeline. Delivers a report with sources. Good for current "
-            "topics, market information, general knowledge.\n\n"
-            + _institution_help_text() +
-            "**📚 Check references** — checks existing bibliographies "
-            "(entry by entry) against CrossRef, OpenAlex and further "
-            "databases. Finds errors, adds DOIs. Good before submitting "
-            "manuscripts.\n\n"
-            "**📑 Find literature** — searches OpenAlex, Semantic Scholar "
-            "and arXiv for your research question, assesses the hits "
-            "against inclusion criteria and lists the selection with full "
-            "bibliographic details. Good for a first overview "
-            "before a review.\n\n"
-            "---\n\n"
-            "### 🧠 Analysis modes\n\n"
-            "**📖 In-depth explanation** — explains a topic for a specific "
-            "audience with a structured build-up. Good for teaching preparation "
-            "or getting into new fields.\n\n"
-            "**🔍 Peer review** — writes a structured review of "
-            "a paper, aspect by aspect. Good for "
-            "journal reviews, conference reviews, theses.\n\n"
-            "**⚖️ Decision analysis** — structured multi-criteria "
-            "analysis of 2–8 options against your criteria. Good for "
-            "technology choices and strategic decisions.\n\n"
-            "**🔬 Research design** — develops a methodological research design "
-            "from a research question: literature gap, hypotheses, method, "
-            "limitations. Good for project conception and "
-            "proposal outlines.\n\n"
-            "**💰 Grant proposal** — proposal draft with a real literature "
-            "search for the state of research, work plan and "
-            "coherence check. Good for proposals in the concept phase.\n\n"
-            "**📚 Literature review** — literature review based on a real "
-            "literature search (with citation chasing): a synthesis per key "
-            "question and a meta-synthesis. Good for thesis chapters and overviews."
-        ),
+        "content": "\n\n".join(p for p in paragraphs if p),
     }
 
 
@@ -2489,7 +2519,7 @@ CHAT_STORAGE_KEY = "research-toolset-chat"
 CHAT_STORE_MAX_MESSAGES = 200
 CHAT_STORE_MAX_HISTORY = 60
 
-_WELCOME_PREFIXES = ("👋 Welcome",)
+_WELCOME_PREFIXES = ("👋 Willkommen", "👋 Welcome")
 
 
 def _browser_storage_secret() -> Optional[str]:
@@ -2515,7 +2545,8 @@ def _message_text(content) -> str:
 def _is_transient(text: str) -> bool:
     """Welcome message and thinking placeholder are not worth storing."""
     t = text.strip()
-    return not t or t == THINKING_PLACEHOLDER or t.startswith(_WELCOME_PREFIXES)
+    return (not t or t in (THINKING_PLACEHOLDER, thinking_placeholder())
+            or t.startswith(_WELCOME_PREFIXES))
 
 
 def save_chat_to_browser(chatbot: list, app_state: AppState):
@@ -2586,7 +2617,7 @@ def _json_size(value) -> int:
 
 def _fit_result_snapshot(snap: dict) -> dict:
     """Shorten the texts in _RESULT_TRIM_ORDER until the snapshot fits."""
-    note = "*… shortened to fit into the browser storage.*"
+    note = tr("*… shortened to fit into the browser storage.*")
     for key in _RESULT_TRIM_ORDER:
         over = _json_size(snap) - RESULT_STORE_MAX_BYTES
         if over <= 0:
@@ -2719,14 +2750,14 @@ def save_result_to_browser(app_state: AppState, report: str, sources: str,
 def _restored_banner(snap: dict) -> str:
     try:
         when = datetime.fromisoformat(snap["saved_at"]).strftime(
-            "%Y-%m-%d %H:%M")
+            tr("%Y-%m-%d %H:%M"))
     except ValueError:
         when = snap["saved_at"] or "?"
-    text = (f"↩️ **Restored result** from {when}: kept in this browser and "
-            "shown again after reloading the page. The Word export has no "
-            "metadata appendices.")
+    text = tr("↩️ **Restored result** from {date}: kept in this browser and "
+              "shown again after reloading the page. The Word export has no "
+              "metadata appendices.", date=when)
     if snap["truncated"]:
-        text += " Parts were shortened to fit into the browser storage."
+        text += " " + tr("Parts were shortened to fit into the browser storage.")
     return f"> {text}\n\n"
 
 
@@ -2752,18 +2783,18 @@ def restore_result_from_browser(stored, app_state: AppState):
         snap["sources"],
         snap["progress"],
         snap["extracts"],
-        snap["pipeline_run"] or "*No research started yet.*",
+        snap["pipeline_run"] or tr("*No research started yet.*"),
     )
 
 
 def _empty_result_texts() -> tuple[str, str, str, str, str]:
     """Report, sources, progress, extracts and pipeline run before a run."""
     return (
-        "*Start a research run...*",
-        "*No sources yet.*",
-        "*Waiting for the research to start...*",
-        "*No extracts yet.*",
-        "*No research started yet.*",
+        tr("*Start a research run...*"),
+        tr("*No sources yet.*"),
+        tr("*Waiting for the research to start...*"),
+        tr("*No extracts yet.*"),
+        tr("*No research started yet.*"),
     )
 
 
@@ -2856,7 +2887,7 @@ async def adopt_last_response(app_state: AppState, chatbot: list):
     app_state = _get_ready_state(app_state)
 
     if not chatbot:
-        gr.Warning("No chat messages yet.")
+        gr.Warning(tr("No chat messages yet."))
         return gr.update()
 
     # Find the last relevant assistant answer
@@ -2873,20 +2904,20 @@ async def adopt_last_response(app_state: AppState, chatbot: list):
             raw = raw.strip()
             # Skip status messages
             if not raw or any(raw.startswith(p) for p in (
-                "🔍", "✅", "⏳", "🤔", "📚 **Literature", "⚠️",
-                "👋 Welcome",
+                "🔍", "✅", "⏳", "🤔", "📚 **Literature", "📚 **Reference", "📚 **Literaturprüfung", "⚠️",
+                "👋 Welcome", "👋 Willkommen",
             )):
                 continue
             content = raw
             break
 
     if not content:
-        gr.Warning("No suitable assistant answer found.")
+        gr.Warning(tr("No suitable assistant answer found."))
         return gr.update()
 
     # Short texts (< 200 characters) are taken directly — no LLM needed
     if len(content) < 200:
-        gr.Info("📋 Copied into the input field")
+        gr.Info(tr("📋 Copied into the input field"))
         return gr.MultimodalTextbox(value={"text": content, "files": []})
 
     # LLM clean-up: remove framing text (small model = faster)
@@ -2899,13 +2930,13 @@ async def adopt_last_response(app_state: AppState, chatbot: list):
             )
             cleaned = cleaned.strip()
             if cleaned and len(cleaned) > 20:
-                gr.Info("📋 Cleaned up and copied into the input field")
+                gr.Info(tr("📋 Cleaned up and copied into the input field"))
                 return gr.MultimodalTextbox(value={"text": cleaned, "files": []})
     except Exception as e:
         logger.warning(f"LLM clean-up failed: {e}")
 
     # Fallback: take it uncleaned
-    gr.Info("📋 Copied into the input field (not cleaned up)")
+    gr.Info(tr("📋 Copied into the input field (not cleaned up)"))
     return gr.MultimodalTextbox(value={"text": content, "files": []})
 
 
@@ -2925,7 +2956,7 @@ async def sidebar_upload_files(app_state: AppState, files):
         ext = Path(filepath).suffix.lower()
 
         if ext not in DOCUMENT_EXTENSIONS:
-            gr.Warning(f"⚠️ {filename}: format not supported")
+            gr.Warning(tr("⚠️ {name}: format not supported", name=filename))
             continue
 
         try:
@@ -2947,7 +2978,7 @@ async def sidebar_upload_files(app_state: AppState, files):
                     processed = proc.process_document(filepath)
                     content = processed.content
                 except Exception:
-                    content = f"[Could not process {filename}]"
+                    content = tr("[{name} could not be processed]", name=filename)
 
             tokens = max(1, len(content) // 3)
             doc_id = str(uuid.uuid4())[:8]
@@ -2973,7 +3004,7 @@ async def sidebar_upload_files(app_state: AppState, files):
 
 def export_markdown(app_state: AppState):
     if not app_state or not app_state.current_research:
-        gr.Warning("No research to export.")
+        gr.Warning(tr("No research to export."))
         return None
     ctx = app_state.current_research
     # Writes to GRADIO_TEMP_DIR (default: tempfile.gettempdir()). Gradio
@@ -2986,26 +3017,26 @@ def export_markdown(app_state: AppState):
     ) as f:
         f.write(ctx.final_report or "")
         filepath = f.name
-    gr.Info("✅ Markdown export created.")
+    gr.Info(tr("✅ Markdown export created."))
     return filepath
 
 
 def export_word(app_state: AppState):
     if not app_state or not app_state.current_research:
-        gr.Warning("No research to export.")
+        gr.Warning(tr("No research to export."))
         return None
     try:
         from src.exporters.word_exporter import export_research_to_word
         ctx = _word_export_context(app_state)
         filepath = export_research_to_word(ctx)
         if filepath:
-            gr.Info("✅ Word export created.")
+            gr.Info(tr("✅ Word export created."))
             return filepath
-        gr.Warning("⚠️ Word export: no file produced.")
+        gr.Warning(tr("⚠️ Word export: no file was produced."))
         return None
     except Exception as e:
         logger.error(f"Word export error: {e}", exc_info=True)
-        gr.Warning(f"⚠️ Word export failed: {e}")
+        gr.Warning(tr("⚠️ Word export failed: {error}", error=e))
         return None
 
 
@@ -3086,18 +3117,18 @@ async def autofill_analysis_form(app_state, msg, research_mode, *analysis_args):
         # validation) and explain why.
         app_state.autofill_pending = -1
         app_state.autofill_note = message or (
-            "The mandatory fields could not be derived from the chat so far "
-            "— please complete them in the form below."
+            tr("The mandatory fields could not be derived from the chat so far "
+               "— please fill them in in the form below.")
         )
         return unchanged
 
     app_state.autofill_pending = len(filled)
     app_state.autofill_note = (
-        f"I pre-filled {len(filled)} of {len(requirements)} fields from the "
-        f"chat so far: "
-        + ", ".join(f"**{_field_label(requirements, f)}**" for f in filled)
-        + ". Please review and complete them in the form below, then click "
-        "*Start research* again."
+        tr("I pre-filled {n} of {total} fields from the chat so far: {fields}. "
+           "Please review and complete them in the form below, then click "
+           "*Start research* again.",
+           n=len(filled), total=len(requirements),
+           fields=", ".join(f"**{_field_label(requirements, f)}**" for f in filled))
     )
 
     updates = list(unchanged)
@@ -3109,7 +3140,7 @@ async def autofill_analysis_form(app_state, msg, research_mode, *analysis_args):
 def _field_label(requirements, field: str) -> str:
     for r in requirements:
         if getattr(r, "field", "") == field:
-            return getattr(r, "label", field)
+            return tr(getattr(r, "label", field))
     return field
 
 
@@ -3130,7 +3161,7 @@ async def autofill_preflight_values(app_state, message_value, use_case: str):
     entry = USE_CASE_REGISTRY.get(use_case) or {}
     checker = entry.get("preflight")
     if checker is None:
-        gr.Warning(f"Unknown use case: {use_case}")
+        gr.Warning(tr("Unknown mode: {mode}", mode=use_case))
         return ()
 
     requirements = checker.get_requirements()
@@ -3138,7 +3169,7 @@ async def autofill_preflight_values(app_state, message_value, use_case: str):
 
     app_state = _get_ready_state(app_state)
     if not getattr(app_state, "llm", None):
-        gr.Warning("LLM not ready — no suggestion possible.")
+        gr.Warning(tr("Language model not ready — no suggestion possible."))
         return unchanged
 
     # The not yet submitted text in the input field counts too: that is
@@ -3158,15 +3189,17 @@ async def autofill_preflight_values(app_state, message_value, use_case: str):
         )
     except Exception as e:
         logger.error("Autofill failed: %s", e, exc_info=True)
-        gr.Warning(f"Suggestion failed: {type(e).__name__}")
+        gr.Warning(tr("Suggestion failed: {error}", error=type(e).__name__))
         return unchanged
 
     if message:
         gr.Warning(message)
     else:
         missing = len(requirements) - len(values)
-        info = f"✨ {len(values)} of {len(requirements)} fields suggested"
-        info += " — please review and complete." if missing else " — please review."
+        info = (tr("✨ {n} of {total} fields suggested — please review and complete.",
+                   n=len(values), total=len(requirements)) if missing
+                else tr("✨ {n} of {total} fields suggested — please review.",
+                        n=len(values), total=len(requirements)))
         gr.Info(info)
 
     return tuple(
@@ -3186,18 +3219,18 @@ def _bibtex_text(app_state: AppState) -> str:
 def export_bibtex(app_state: AppState):
     """Export verified bibliography entries as a BibTeX file."""
     if not app_state or not app_state.current_research:
-        gr.Warning("No research to export.")
+        gr.Warning(tr("No research to export."))
         return None
     ctx = app_state.current_research
     # Only meaningful for literature checks
     if not (ctx.output_schema and ctx.output_schema.format_type == "literature_check"):
-        gr.Warning("BibTeX export is only available for literature checks.")
+        gr.Warning(tr("The BibTeX export is only available for reference checks."))
         return None
     try:
         bibtex = _bibtex_text(app_state)
         n_entries = len(re.findall(r"^@\w+\s*\{", bibtex, re.M))
         if not n_entries:
-            gr.Warning("No bibliography entries to export.")
+            gr.Warning(tr("No bibliography entries to export."))
             return None
         gradio_temp = os.environ.get("GRADIO_TEMP_DIR") or tempfile.gettempdir()
         os.makedirs(gradio_temp, exist_ok=True)
@@ -3207,11 +3240,11 @@ def export_bibtex(app_state: AppState):
         ) as f:
             f.write(bibtex)
             filepath = f.name
-        gr.Info(f"✅ BibTeX export created ({n_entries} entries).")
+        gr.Info(tr("✅ BibTeX export created ({n} entries).", n=n_entries))
         return filepath
     except Exception as e:
         logger.error(f"BibTeX export error: {e}", exc_info=True)
-        gr.Warning(f"⚠️ BibTeX export failed: {e}")
+        gr.Warning(tr("⚠️ BibTeX export failed: {error}", error=e))
         return None
 
 
@@ -3234,11 +3267,14 @@ def _institution_help_text() -> str:
     prof = get_profile()
     if not prof.configured:
         return ""
-    return (
-        f"**🏛️ {prof.label} research** — focuses on sources of {prof.name} "
-        f"({prof.directory_name or 'person directory'}, website index, "
-        f"{', '.join(prof.domains)}). With the *{prof.label} only* option for strictly "
-        f"internal searches. Good for institutional questions.\n\n"
+    return tr(
+        "**🏛️ {label} research** — focuses on sources of {name} "
+        "({directory}, website index, {domains}). With the option "
+        "*{label} only* for strictly internal searches. Good for questions "
+        "about the institution.",
+        label=prof.label, name=prof.name,
+        directory=prof.directory_name or tr("person directory"),
+        domains=", ".join(prof.domains),
     )
 
 
@@ -3259,6 +3295,12 @@ def _export_to_file(export_fn):
 
 
 def create_app(config: AppConfig = None) -> gr.Blocks:
+    """The app: one page per interface language.
+
+    The default language is the start page, every other enabled language
+    gets its own page under /<code> (see src.ui.i18n). The pages are built
+    from the same code; only the language differs.
+    """
     if config is None:
         config = AppConfig.from_env()
 
@@ -3268,6 +3310,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
     else:
         logger.info("Browser storage: off — set BROWSER_STORAGE_SECRET to enable")
 
+    codes = i18n.languages()
     with gr.Blocks(
         title=TOOL_NAME,
         analytics_enabled=False,    # second line of defence (the first is the env)
@@ -3287,9 +3330,90 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
         # Gradio cleans up user uploads and download caches automatically
         # via delete_cache + the component lifecycle.
     ) as demo:
+        _build_page(demo, config, codes[0])
+    i18n.bind_events(demo, i18n.page_path(codes[0]), codes[0])
+
+    for code in codes[1:]:
+        path = i18n.page_path(code)
+        with demo.route(i18n.language_name(code), path, show_in_navbar=False):
+            _build_page(demo, config, code)
+        i18n.bind_events(demo, path, code)
+
+    # No event handler is meant as a public API. "private" removes them
+    # from /gradio_api/info and from the Gradio client libraries; the
+    # browser UI is unaffected. This hides the endpoints, it is not an
+    # access control: authentication in front of the app is what keeps
+    # others out (see SECURITY.md).
+    fns = getattr(demo, "fns", None)
+    if isinstance(fns, dict):
+        fns = fns.values()
+    for fn in fns if isinstance(fns, (list, tuple, type({}.values()))) else ():
+        fn.api_visibility = "private"
+
+    return demo
+
+
+def _page_output_language(ui_lang: str) -> str:
+    """Preselected report language: the page's language if it is offered."""
+    codes = [code for _, code in language_choices()]
+    return ui_lang if ui_lang in codes else default_language()
+
+
+def _language_switch_html(current: str, root_path: str) -> str:
+    """Links to the other language pages ('' with only one language)."""
+    codes = i18n.languages()
+    if len(codes) < 2:
+        return ""
+    base = (root_path or "").rstrip("/")
+    items = []
+    for code in codes:
+        name = html_escape(i18n.language_name(code))
+        if code == current:
+            items.append(f"<span aria-current='true' title='{name}'>{code.upper()}</span>")
+        else:
+            href = html_escape(f"{base}/{i18n.page_path(code)}")
+            items.append(f"<a href='{href}' hreflang='{code}' lang='{code}' "
+                         f"data-lang='{code}' title='{name}'>{code.upper()}</a>")
+    return f"<nav aria-label='{html_escape(tr('Language'))}'>{''.join(items)}</nav>"
+
+
+#: localStorage key of the language chosen in the switch.
+UI_LANGUAGE_STORAGE_KEY = "research-toolset-ui-language"
+
+
+def _language_js(current: str, root_path: str) -> str:
+    """Page-load script: lang attribute, remembered language, switch clicks."""
+    import json
+    base = (root_path or "").rstrip("/")
+    pages = {code: f"{base}/{i18n.page_path(code)}" for code in i18n.languages()}
+    return f"""() => {{
+        const KEY = {json.dumps(UI_LANGUAGE_STORAGE_KEY)};
+        const page = {json.dumps(current)};
+        const pages = {json.dumps(pages)};
+        document.documentElement.lang = page;
+        let stored = null;
+        try {{ stored = localStorage.getItem(KEY); }} catch (e) {{}}
+        if ({json.dumps(not i18n.page_path(current))} && stored && stored !== page
+                && pages[stored]) {{
+            location.replace(pages[stored]);
+            return;
+        }}
+        try {{ localStorage.setItem(KEY, page); }} catch (e) {{}}
+        document.addEventListener('click', (e) => {{
+            const a = e.target.closest && e.target.closest('#language-switch a[data-lang]');
+            if (a) {{ try {{ localStorage.setItem(KEY, a.dataset.lang); }} catch (err) {{}} }}
+        }}, true);
+    }}"""
+
+
+def _build_page(demo: gr.Blocks, config: AppConfig, lang: str) -> None:
+    """Build the components and events of one page in language `lang`."""
+    token = i18n.set_current(lang)
+    try:
 
         # --- State ---
-        app_state = gr.State(init_app_state())
+        output_language = _page_output_language(lang)
+        app_state = gr.State(AppState(output_language=output_language))
         stored_message = gr.State(None)
         # Chat and last result in the browser's localStorage (see
         # save_chat_to_browser, save_result_to_browser), only with a fixed
@@ -3314,16 +3438,20 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
         # Labelled buttons instead of bare symbols; "New chat" lives only
         # here (it used to appear in the sidebar and below the input too).
         with gr.Row(elem_id="app-header"):
-            sidebar_toggle = gr.Button("☰ Documents", elem_id="sidebar-toggle",
+            sidebar_toggle = gr.Button(tr("☰ Documents"), elem_id="sidebar-toggle",
                                        elem_classes=["header-btn"],
                                        scale=0, min_width=0)
             gr.Markdown(f"**🔍 {TOOL_NAME}**", elem_id="header-title")
-            new_chat_btn = gr.Button("✨ New chat", elem_id="new-chat-btn",
+            new_chat_btn = gr.Button(tr("✨ New chat"), elem_id="new-chat-btn",
                                      elem_classes=["header-btn"],
                                      scale=0, min_width=0)
-            result_toggle = gr.Button("📊 Result", elem_id="result-toggle",
+            result_toggle = gr.Button(tr("📊 Result"), elem_id="result-toggle",
                                       elem_classes=["header-btn"],
                                       scale=0, min_width=0)
+            # Plain links: every language is its own page (see create_app).
+            language_switch = _language_switch_html(lang, config.ui.root_path)
+            gr.HTML(language_switch, elem_id="language-switch",
+                    visible=bool(language_switch), min_height=0)
             dark_mode_btn = gr.Button("🌙", elem_id="dark-mode-toggle",
                                       elem_classes=["header-btn"],
                                       scale=0, min_width=0)
@@ -3337,15 +3465,13 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             with gr.Column(scale=0, min_width=240, visible=False,
                            elem_id="sidebar-column") as sidebar:
 
-                gr.Markdown("📁 **DOCUMENTS**", elem_classes=["section-label"])
-                doc_list_display = gr.HTML(
-                    value="<p style='color: var(--body-text-color-subdued); font-size: 0.8rem;'>No documents.</p>",
-                )
+                gr.Markdown(tr("📁 **DOCUMENTS**"), elem_classes=["section-label"])
+                doc_list_display = gr.HTML(value=_no_documents_html())
                 token_bar_display = gr.HTML(value="")
 
                 gr.Markdown("---")
                 sidebar_file_upload = gr.File(
-                    label="📄 Upload documents",
+                    label=tr("📄 Upload documents"),
                     file_count="multiple",
                     file_types=[".pdf", ".docx", ".doc", ".txt", ".md",
                                 ".html", ".htm", ".csv", ".py",
@@ -3360,6 +3486,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                     # Gradio 6: no type parameter; "messages" is the only
                     # supported mode.
                     value=[_welcome_message()],
+                    label="Chat",
                     buttons=["copy"],        # NO "share" — prevents
                                              # external share mechanisms.
                     allow_tags=False,        # strict sanitisation
@@ -3371,7 +3498,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                     autoscroll=False,
                     height="calc(100vh - 280px)",
                     elem_id="chatbot",
-                    placeholder="What would you like to research?",
+                    placeholder=tr("What would you like to research?"),
                 )
 
                 # ─── Input card: text field + toolbar ──────────────
@@ -3379,10 +3506,10 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 # options; right: discuss (subtle) and start (the only
                 # accent button). Enter in the text field still sends to
                 # the chat; the field's own arrow is dropped because it
-                # duplicated "Discuss the request".
+                # duplicated "Discuss request".
                 with gr.Column(elem_id="composer"):
                     message_input = gr.MultimodalTextbox(
-                        placeholder="What would you like to research?",
+                        placeholder=tr("What would you like to research?"),
                         file_types=[".pdf", ".docx", ".txt", ".md", ".html",
                                     ".csv", ".py"],
                         show_label=False,
@@ -3404,7 +3531,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                         )
                         # Opens/closes the options row below purely in the
                         # browser (see options_btn.click further down).
-                        options_btn = gr.Button("⚙️ Options", scale=0,
+                        options_btn = gr.Button(tr("⚙️ Options"), scale=0,
                                                 min_width=0,
                                                 elem_id="options-btn")
                         # Own row so the two actions wrap together on
@@ -3412,15 +3539,15 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                         with gr.Row(elem_id="composer-actions"):
                             # Label kept: the chat prompt and the clickable
                             # chat actions refer to it by this name.
-                            send_btn = gr.Button("💬 Discuss the request",
+                            send_btn = gr.Button(tr("💬 Discuss request"),
                                                  variant="secondary",
                                                  scale=0, min_width=0,
                                                  elem_id="send-btn")
-                            start_btn = gr.Button("🔍 Start research",
+                            start_btn = gr.Button(tr("🔍 Start research"),
                                                   variant="primary",
                                                   scale=0, min_width=0,
                                                   elem_id="research-btn")
-                            stop_btn = gr.Button("⏹️ Stop", variant="stop",
+                            stop_btn = gr.Button(tr("⏹️ Stop"), variant="stop",
                                                  scale=0, min_width=0,
                                                  visible=False,
                                                  elem_id="stop-btn")
@@ -3437,9 +3564,9 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                     # options that apply to the selected mode.
                     with gr.Row(elem_id="options-panel"):
                         template_selector = gr.Dropdown(
-                            choices=template_choices(),
+                            choices=[(tr(label), tid) for label, tid in template_choices()],
                             value=DEFAULT_TEMPLATE,
-                            label="Report template",
+                            label=tr("Report template"),
                             scale=1,
                             min_width=200,
                             elem_id="template-selector",
@@ -3448,8 +3575,8 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                         # enables more than one (OUTPUT_LANGUAGES).
                         output_language_selector = gr.Dropdown(
                             choices=language_choices(),
-                            value=default_language(),
-                            label="Report language",
+                            value=output_language,
+                            label=tr("Report language"),
                             scale=0,
                             min_width=150,
                             visible=len(language_choices()) > 1,
@@ -3458,19 +3585,20 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                         with gr.Column(scale=1, min_width=220,
                                        elem_id="options-checks"):
                             institution_only_checkbox = gr.Checkbox(
-                                label=f"{get_profile().label} only" if get_profile().configured else "Institution only",
+                                label=(tr("{institution} only", institution=get_profile().label)
+                                       if get_profile().configured else tr("Institution only")),
                                 value=False,
                                 visible=False,
                                 elem_id="institution-only-checkbox",
                             )
                             academic_only_checkbox = gr.Checkbox(
-                                label="🎓 Scholarly literature only",
+                                label=tr("🎓 Scholarly literature only"),
                                 value=False,
                                 visible=True,
                                 elem_id="academic-only-checkbox",
                             )
                             show_gate_checkbox = gr.Checkbox(
-                                label="📋 Confirm plan before start",
+                                label=tr("📋 Confirm plan before start"),
                                 value=False,
                                 visible=True,
                                 elem_id="show-gate-checkbox",
@@ -3483,7 +3611,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 with gr.Group(visible=False,
                               elem_id="plan-gate") as plan_gate_group:
                     gr.Markdown(
-                        "### 📋 Plan preview",
+                        tr("### 📋 Plan preview"),
                         elem_id="plan-gate-header",
                     )
                     plan_md = gr.Markdown(
@@ -3492,7 +3620,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                         elem_id="plan-gate-md",
                     )
                     query_edit_box = gr.Textbox(
-                        label="🔍 Search queries (one per line — edit, add or remove)",
+                        label=tr("🔍 Search queries (one per line — edit, add or delete)"),
                         value="",
                         lines=4,
                         max_lines=10,
@@ -3502,14 +3630,14 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                     )
                     with gr.Row():
                         confirm_btn = gr.Button(
-                            "▶️ Run plan",
+                            tr("▶️ Run plan"),
                             variant="primary",
                             size="sm",
                             visible=False,
                             elem_id="plan-confirm-btn",
                         )
                         cancel_btn = gr.Button(
-                            "✖ Cancel",
+                            tr("✖ Cancel"),
                             variant="stop",
                             size="sm",
                             visible=False,
@@ -3520,43 +3648,35 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 with gr.Group(visible=False,
                               elem_id="explainer-panel") as explainer_panel:
                     gr.Markdown(
-                        "**In-depth explanation — mandatory inputs**",
+                        tr("**In-depth explanation — mandatory inputs**"),
                         elem_id="explainer-panel-header",
                     )
                     explainer_topic = gr.Textbox(
-                        label="Topic",
-                        placeholder=(
-                            "e.g. How does reinforcement learning work?"
-                        ),
-                        info=(
-                            "Phrase it concretely (at least 10 characters), "
-                            "not just a keyword"
-                        ),
+                        label=tr("Topic"),
+                        placeholder=tr("e.g. How does reinforcement learning work?"),
+                        info=tr("Be specific (at least 10 characters), "
+                                "not just a keyword"),
                         lines=1,
                     )
                     explainer_audience = gr.Textbox(
-                        label="Audience",
-                        placeholder=(
-                            "e.g. computer science undergraduates with maths up to linear "
-                            "algebra, no prior ML knowledge"
-                        ),
-                        info=(
-                            "Include prior knowledge (at least 15 characters)"
-                        ),
+                        label=tr("Audience"),
+                        placeholder=tr("e.g. computer science undergraduates with "
+                                       "maths up to linear algebra, no prior ML knowledge"),
+                        info=tr("State prior knowledge (at least 15 characters)"),
                         lines=2,
                     )
                     with gr.Row():
                         explainer_length = gr.Dropdown(
-                            choices=EXPLAINER_LENGTHS,
+                            choices=[(tr(l), v) for l, v in EXPLAINER_LENGTHS],
                             value="medium",
-                            label="Length",
-                            info="short ≈3k words · medium ≈8k · detailed ≈15k",
+                            label=tr("Length"),
+                            info=tr("short ≈ 3,000 words · medium ≈ 8,000 · detailed ≈ 15,000"),
                             scale=1,
                         )
                         explainer_purpose = gr.Dropdown(
-                            choices=EXPLAINER_PURPOSES,
+                            choices=[(tr(l), v) for l, v in EXPLAINER_PURPOSES],
                             value="self_study",
-                            label="Purpose (optional)",
+                            label=tr("Purpose (optional)"),
                             scale=1,
                         )
 
@@ -3571,12 +3691,8 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 )
 
                 _ANALYSIS_PANEL_HEADERS = {
-                    "literature_finder": "**Find literature — mandatory inputs**",
-                    "peer_review": "**Peer review — mandatory inputs**",
-                    "decision_analysis": "**Decision analysis — mandatory inputs**",
-                    "research_design": "**Research design — mandatory inputs**",
-                    "grant_proposal": "**Grant proposal — mandatory inputs**",
-                    "literature_review": "**Literature review — mandatory inputs**",
+                    uc: tr("**{label} — mandatory inputs**", label=_use_case_label(uc))
+                    for uc in ANALYSIS_USE_CASE_ORDER
                 }
 
                 # Collecting structures
@@ -3603,7 +3719,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                         # Suggestion from the chat so far. Only pre-fills the
                         # fields — nothing is submitted.
                         _autofill_btn = gr.Button(
-                            "✨ Suggest from chat", size="sm",
+                            tr("✨ Suggest from the chat"), size="sm",
                             variant="secondary",
                         )
                     analysis_panels[uc_name] = _panel
@@ -3612,7 +3728,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
 
                 # Fixed chat system prompt; not editable in the UI. The
                 # {date} placeholder is filled per message by the handlers.
-                system_prompt = gr.State(SYSTEM_PROMPT_CHAT)
+                system_prompt = gr.State(chat_system_prompt(lang))
 
             # ─── RESULT PANEL (right) ───────────────────────────
             with gr.Column(scale=2, visible=False,
@@ -3622,7 +3738,7 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 # header. The download field only appears once a file
                 # exists (see _export_to_file).
                 with gr.Row(elem_id="result-header"):
-                    gr.Markdown("**Result**", elem_id="result-title")
+                    gr.Markdown(tr("**Result**"), elem_id="result-title")
                     word_export_btn = gr.Button(
                         "📄 Word", elem_classes=["export-btn"],
                         scale=0, min_width=0,
@@ -3645,13 +3761,13 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 with gr.Tabs():
                     (empty_report, empty_sources, empty_progress,
                      empty_extracts, empty_pipeline_run) = _empty_result_texts()
-                    with gr.TabItem("📄 Report"):
+                    with gr.TabItem(tr("📄 Report")):
                         report_display = gr.Markdown(
                             value=empty_report,
                             elem_id="report-display",
                         )
 
-                    with gr.TabItem("🔗 Sources"):
+                    with gr.TabItem(tr("🔗 Sources")):
                         sources_display = gr.Markdown(
                             value=empty_sources,
                             elem_id="sources-display",
@@ -3659,20 +3775,20 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
 
                     # Progress, extracts and pipeline run are mostly
                     # needed for troubleshooting, so they share one tab.
-                    with gr.TabItem("🧭 History", elem_id="history-tab"):
-                        with gr.Accordion("📊 Progress", open=True):
+                    with gr.TabItem(tr("🧭 History"), elem_id="history-tab"):
+                        with gr.Accordion(tr("📊 Progress"), open=True):
                             progress_display = gr.Markdown(
                                 value=empty_progress,
                                 elem_id="progress-display",
                             )
 
-                        with gr.Accordion("📝 Extracts", open=False):
+                        with gr.Accordion(tr("📝 Extracts"), open=False):
                             extracts_display = gr.Markdown(
                                 value=empty_extracts,
                                 elem_id="extracts-display",
                             )
 
-                        with gr.Accordion("🧠 Pipeline run",
+                        with gr.Accordion(tr("🧠 Pipeline run"),
                                           open=False) as pipeline_run_acc:
                             # Makes the DAG plan and all intermediate
                             # structures transparent: output schema,
@@ -3819,10 +3935,8 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             )
 
             def render_pipeline_run(_ctx):  # type: ignore
-                return (
-                    "*Pipeline-run view not available "
-                    "(render module missing).*"
-                )
+                return tr("*“Pipeline run” view not available "
+                          "(render module missing).*")
 
         def _refresh_pipeline_run(state):
             """Read the current ctx from the state and render the tab.
@@ -3841,16 +3955,16 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
             from `app_state` (as a gr.State input).
             """
             if state is None or not getattr(state, "current_research", None):
-                return "*No research started yet.*"
+                return tr("*No research started yet.*")
             # A restored result has no research object to render from.
             restored = _restored_snapshot(state)
             if restored:
-                return restored["pipeline_run"] or "*No research started yet.*"
+                return restored["pipeline_run"] or tr("*No research started yet.*")
             try:
                 return render_pipeline_run(state.current_research)
             except Exception as e:
                 logger.warning("Pipeline-run rendering failed: %s", e)
-                return f"*Rendering error: {e}*"
+                return tr("*Display error: {error}*", error=e)
 
         # progress_display.change() instead of app_state.change() — see the
         # docstring above. progress_display changes its value with every
@@ -4179,6 +4293,12 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 queue=False,
             )
 
+        # Language: remember the choice in this browser. The start page
+        # forwards to the remembered language; a click on the switch stores
+        # the target first, so it never forwards back.
+        if language_switch:
+            demo.load(None, js=_language_js(lang, config.ui.root_path), queue=False)
+
         # Auto Dark-Mode + Paste-Interceptor
         demo.load(
             None,
@@ -4297,16 +4417,5 @@ def create_app(config: AppConfig = None) -> gr.Blocks:
                 
             }""",
         )
-
-    # No event handler is meant as a public API. "private" removes them
-    # from /gradio_api/info and from the Gradio client libraries; the
-    # browser UI is unaffected. This hides the endpoints, it is not an
-    # access control: authentication in front of the app is what keeps
-    # others out (see SECURITY.md).
-    fns = getattr(demo, "fns", None)
-    if isinstance(fns, dict):
-        fns = fns.values()
-    for fn in fns if isinstance(fns, (list, tuple, type({}.values()))) else ():
-        fn.api_visibility = "private"
-
-    return demo
+    finally:
+        i18n.reset_current(token)

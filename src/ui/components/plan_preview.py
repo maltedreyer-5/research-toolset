@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from src.ui.i18n import tr
+
 if TYPE_CHECKING:
     from src.pipeline.models import ResearchPlan, TaskPlan
 
@@ -78,9 +80,9 @@ def format_task_plan_markdown(plan: Optional["TaskPlan"]) -> str:
     wrong type from being rendered after an import.
     """
     if plan is None:
-        return "_(no analysis plan)_"
+        return tr("_(no analysis plan)_")
     if not plan.tasks:
-        return f"### Plan: {plan.use_case}\n\n_(no tasks yet)_"
+        return f"### Plan: {plan.use_case}\n\n" + tr("_(no tasks yet)_")
 
     # Group tasks by phase
     by_phase: dict[str, list] = {}
@@ -92,14 +94,17 @@ def format_task_plan_markdown(plan: Optional["TaskPlan"]) -> str:
         by_phase[t.phase].append(t)
 
     lines: list[str] = []
-    lines.append(f"### 📋 Analysis plan: {plan.use_case}")
+    lines.append(tr("### 📋 Analysis plan: {use_case}", use_case=plan.use_case))
     lines.append("")
-    lines.append(f"_{len(plan.tasks)} tasks in {len(phase_order)} phases_")
+    lines.append(tr("_{tasks} tasks in {phases} phases_",
+                    tasks=len(plan.tasks), phases=len(phase_order)))
     lines.append("")
 
     for phase_idx, phase in enumerate(phase_order, start=1):
         tasks = by_phase[phase]
-        lines.append(f"**Phase {phase_idx}: {phase}** ({len(tasks)} {'task' if len(tasks) == 1 else 'tasks'})")
+        count = (tr("1 task") if len(tasks) == 1
+                 else tr("{n} tasks", n=len(tasks)))
+        lines.append(f"**Phase {phase_idx}: {phase}** ({count})")
         for t in tasks:
             desc = t.description or t.id
             deps = ""
@@ -109,7 +114,7 @@ def format_task_plan_markdown(plan: Optional["TaskPlan"]) -> str:
         lines.append("")
 
     if plan.estimated_calls:
-        lines.append(f"_Estimated: {plan.estimated_calls} LLM calls_")
+        lines.append(tr("_Estimated: {n} LLM calls_", n=plan.estimated_calls))
 
     return "\n".join(lines).rstrip()
 
@@ -206,20 +211,21 @@ def format_research_plan_markdown(
     context: list[str] = []
     if mode:
         from src.institution import get_profile
-        label = {"institution": f"{get_profile().label} research",
-                 "web": "Web research"}.get(mode, mode)
-        context.append(f"**Mode:** {label}")
+        label = {"institution": tr("{institution} research",
+                                   institution=get_profile().label),
+                 "web": tr("Web research")}.get(mode, mode)
+        context.append(tr("**Mode:** {label}", label=label))
     if academic_only:
-        context.append("**Filter:** scholarly sources only")
+        context.append(tr("**Filter:** scholarly sources only"))
     if search_stats:
         langs = search_stats.get("langs") or search_stats.get("languages")
         if langs:
             langs_text = ", ".join(str(x) for x in langs) if isinstance(
                 langs, (list, tuple, set)) else str(langs)
-            context.append(f"**Languages:** {langs_text}")
+            context.append(tr("**Languages:** {langs}", langs=langs_text))
         n_terms = search_stats.get("n_terms") or search_stats.get("terms")
         if isinstance(n_terms, int):
-            context.append(f"**Search terms:** {n_terms}")
+            context.append(tr("**Search terms:** {n}", n=n_terms))
 
     if not context:
         return body

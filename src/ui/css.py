@@ -48,6 +48,54 @@ footer { display: none !important; }
     background: var(--background-fill-secondary) !important;
 }
 
+/* Gradio adds a page navbar as soon as an app has several pages (here:
+   one per interface language). The language switch in the header replaces
+   it. Hidden here because gr.Navbar(visible=False) has no effect in
+   Gradio 6.29 (the frontend never sees the flag). */
+.nav-holder {
+    display: none !important;
+}
+
+/* Language switch: plain links to the other language pages, styled as a
+   small segmented control next to the header buttons. */
+#language-switch {
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+    width: auto !important;
+    padding: 0 !important;
+}
+
+#language-switch nav {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border-color-primary);
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+#language-switch nav > * {
+    padding: 6px 8px;
+    border-radius: calc(var(--radius-md) - 2px);
+    text-decoration: none;
+}
+
+#language-switch [aria-current] {
+    background: var(--background-fill-secondary);
+    color: var(--body-text-color);
+}
+
+#language-switch a {
+    color: var(--body-text-color-subdued);
+}
+
+#language-switch a:hover {
+    color: var(--body-text-color);
+    background: var(--background-fill-secondary);
+}
+
 #header-title {
     flex: 1;
     text-align: center;
@@ -217,7 +265,7 @@ footer { display: none !important; }
     width: auto !important;
 }
 
-/* "Options" and "Discuss the request" are secondary: quiet until hovered.
+/* "Options" and "Discuss request" are secondary: quiet until hovered.
    margin-left:auto on send pushes the action group to the right. */
 #options-btn, #send-btn {
     background: transparent !important;

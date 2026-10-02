@@ -280,15 +280,18 @@ class PreflightChecker:
             (ok, errors). With `ok=True` errors is empty; with `ok=False`
             errors contains human-readable descriptions of all violations.
         """
+        from src.ui.i18n import tr  # messages are shown in the interface
+
         errors: list[str] = []
         for req in self._requirements:
+            label = tr(req.label)
             value = inputs.get(req.field)
             # Treat empty strings as "missing"
             is_empty = value is None or (
                 isinstance(value, str) and not value.strip()
             )
             if req.required and is_empty:
-                errors.append(f"Field '{req.label}' is required")
+                errors.append(tr("Field “{label}” is required", label=label))
                 continue
             if is_empty:
                 continue  # optional + empty → OK
@@ -296,21 +299,22 @@ class PreflightChecker:
             if req.kind == "choice" and req.choices:
                 if value not in choice_values(req.choices):
                     errors.append(
-                        f"'{req.label}': value {value!r} is not one of the "
-                        f"allowed options {choice_values(req.choices)}"
+                        tr("“{label}”: value {value} is not one of the "
+                           "allowed options {options}", label=label,
+                           value=repr(value), options=choice_values(req.choices))
                     )
             # Length validation
             if (req.min_length is not None and isinstance(value, str)
                     and len(value.strip()) < req.min_length):
                 errors.append(
-                    f"'{req.label}': at least {req.min_length} characters "
-                    f"(currently {len(value.strip())})"
+                    tr("“{label}”: at least {min} characters (currently {n})",
+                       label=label, min=req.min_length, n=len(value.strip()))
                 )
             if req.max_length is not None and isinstance(value, str):
                 if len(value) > req.max_length:
                     errors.append(
-                        f"'{req.label}': at most {req.max_length} characters "
-                        f"(currently {len(value)})"
+                        tr("“{label}”: at most {max} characters (currently {n})",
+                           label=label, max=req.max_length, n=len(value))
                     )
         return (not errors, errors)
 

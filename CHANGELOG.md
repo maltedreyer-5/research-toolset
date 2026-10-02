@@ -17,6 +17,14 @@ project uses [Semantic Versioning](https://semver.org/).
   appendices, BibTeX). *New chat* discards both. Off without the secret;
   the start-up log says which.
 - *New chat* also clears the result panel.
+- Interface languages: English and German, switched in the header. Each
+  language is its own page (default at the root, others under `/<code>`);
+  the browser remembers the choice. Interface text stays English in the
+  code, wrapped in `tr()`; translations are catalogs in `src/ui/locales/`
+  with the English text as key, so a missing entry shows English. Status
+  messages from the pipeline follow the page language, and the report
+  language is preselected from it. New variables `UI_LANGUAGES` and
+  `DEFAULT_UI_LANGUAGE`.
 
 ### Changed
 

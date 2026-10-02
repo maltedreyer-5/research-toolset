@@ -14,6 +14,7 @@ from src.pipeline.followup import build_followup_queries
 from src.about import TOOL_NAME
 from src.output_language import t as catalog_t
 from src.config import PipelineConfig
+from src.ui.i18n import tr
 from src.institution import get_profile, polite_user_agent
 from src.connectors.base import ConnectorRegistry, normalize_url, is_url_blocked
 from src.llm.client import (
@@ -558,7 +559,7 @@ class ResearchOrchestrator:
                 # No finished_at, no execution.
                 await progress_callback(
                     "status",
-                    f"📋 Building the execution plan: {mode}",
+                    tr("📋 Building the execution plan: {mode}", mode=mode),
                 )
                 await runner.decompose_only(ctx)
                 return ctx
@@ -566,7 +567,7 @@ class ResearchOrchestrator:
             # Normal execution or resume after the gate
             await progress_callback(
                 "status",
-                f"🔬 Starting the analysis pipeline: {mode}",
+                tr("🔬 Starting the analysis pipeline: {mode}", mode=mode),
             )
             await runner.run(ctx, skip_decompose=skip_decompose)
             ctx.finished_at = datetime.now().isoformat()
@@ -2474,9 +2475,10 @@ class ResearchOrchestrator:
                 f"(person match on '{anchor.target}' failed)"
             )
             await progress_callback("status", (
-                f"🛡️ Hallucination filter: {n_ext} extracts from "
-                f"{n_src} sources discarded — the sources do not mention "
-                f"'{anchor.target}'"
+                tr("🛡️ Hallucination filter: {extracts} extracts from "
+                   "{sources} sources discarded — the sources do not mention "
+                   "“{target}”", extracts=n_ext, sources=n_src,
+                   target=anchor.target)
             ))
 
         return list(results)
@@ -2635,8 +2637,8 @@ class ResearchOrchestrator:
             )
             try:
                 await progress_callback("status", (
-                    f"🎯 Off-topic filter: {rejected_count} thematically "
-                    f"unsuitable source(s) skipped"
+                    tr("🎯 Off-topic filter: {n} thematically "
+                       "unsuitable source(s) skipped", n=rejected_count)
                 ))
             except Exception:
                 pass  # progress failures must not stop the pipeline
@@ -3248,8 +3250,9 @@ class ResearchOrchestrator:
         if plan_questions:
             await progress_callback(
                 "report_stream",
-                f"⏳ *Condensing extracts into {len(plan_questions)} "
-                f"question answers ({len(ctx.extracts)} extracts in total)...*",
+                tr("⏳ *Condensing extracts into {n} question answers "
+                   "({extracts} extracts in total)...*",
+                   n=len(plan_questions), extracts=len(ctx.extracts)),
             )
             map_results = await asyncio.gather(
                 *[_summarize_question(q) for q in plan_questions]
@@ -3405,7 +3408,7 @@ class ResearchOrchestrator:
             )
             await progress_callback(
                 "report_stream",
-                "⏳ *The synthesis returned no text — trying again...*",
+                tr("⏳ *The synthesis returned no text — trying again...*"),
             )
             try:
                 full_report = (await asyncio.wait_for(

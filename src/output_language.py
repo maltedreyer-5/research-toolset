@@ -24,7 +24,7 @@ formatting it would fail or silently drop values.
 
 This covers text the tool itself writes into reports and exports. The
 report body is written by the LLM, which is told the language by name.
-The user interface stays English.
+The interface language is separate (src.ui.i18n).
 """
 
 from __future__ import annotations

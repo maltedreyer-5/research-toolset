@@ -1,0 +1,6 @@
+# English is the source language: the texts are the keys in the code
+# (tr("...")), so this catalog only names the language. See src/ui/i18n.py.
+[meta]
+name = "English"
+
+[strings]

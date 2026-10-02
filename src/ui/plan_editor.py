@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.ui.i18n import tr
+
 if TYPE_CHECKING:
     from src.pipeline.models import ResearchPlan, ResearchQuestion
 
@@ -30,26 +32,26 @@ def format_plan_markdown(plan: "ResearchPlan") -> str:
     user refines the request in the chat, which produces a new plan.
     """
     if plan is None:
-        return "_(no plan)_"
+        return tr("_(no plan)_")
 
     lines: list[str] = []
-    lines.append("## Research plan")
+    lines.append(tr("## Research plan"))
     lines.append("")
 
     summary = (plan.summary or "").strip()
     if summary:
-        lines.append(f"**Summary:** {summary}")
+        lines.append(tr("**Summary:** {summary}", summary=summary))
         lines.append("")
 
     if plan.questions:
-        lines.append(f"### Questions ({len(plan.questions)})")
+        lines.append(tr("### Questions ({n})", n=len(plan.questions)))
         lines.append("")
         for q in plan.questions:
             lines.extend(_format_question_md(q))
             lines.append("")
 
     if plan.direct_urls:
-        lines.append("### Direct URLs")
+        lines.append(tr("### Direct URLs"))
         for du in plan.direct_urls:
             url = getattr(du, "url", "")
             reason = getattr(du, "reason", "") or ""
@@ -60,17 +62,17 @@ def format_plan_markdown(plan: "ResearchPlan") -> str:
         lines.append("")
 
     if plan.git_repos:
-        lines.append("### Git-Repos")
+        lines.append(tr("### Git-Repos"))
         for gr in plan.git_repos:
             owner = getattr(gr, "owner", "") or ""
             repo = getattr(gr, "repo", "") or ""
             platform = getattr(gr, "platform", "github") or "github"
-            label = f"{platform}:{owner}/{repo}" if owner and repo else "(unnamed)"
+            label = f"{platform}:{owner}/{repo}" if owner and repo else tr("(unnamed)")
             lines.append(f"- {label}")
         lines.append("")
 
     if plan.directory_queries:
-        lines.append(f"### Person directory queries ({len(plan.directory_queries)})")
+        lines.append(tr("### Person directory queries ({n})", n=len(plan.directory_queries)))
         for zq in plan.directory_queries:
             term = getattr(zq, "query", "") or ""
             reason = getattr(zq, "reason", "") or ""
@@ -97,11 +99,11 @@ def _format_question_md(q: "ResearchQuestion") -> list[str]:
     if not terms and q.search_terms:
         terms.append("  - " + ", ".join(q.search_terms))
     if terms:
-        lines.append("  Search terms:")
+        lines.append(tr("  Search terms:"))
         lines.extend(terms)
 
     if q.source_scope:
-        lines.append(f"  Source scope: {q.source_scope}")
+        lines.append(tr("  Source scope: {scope}", scope=q.source_scope))
 
     return lines
 

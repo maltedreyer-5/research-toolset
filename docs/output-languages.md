@@ -1,7 +1,9 @@
 # Output languages
 
-The user interface is English. The *output language* — the language of
-reports and exports — is chosen per run in the interface.
+The *output language* — the language of reports and exports — is chosen
+per run in the interface. The language of the interface itself is set
+separately (see [Interface languages](#interface-languages) below); a
+page's language is preselected as the output language when it is enabled.
 
 ## What follows the output language
 
@@ -73,3 +75,40 @@ Some German text in the code is data, not interface: German stop words and
 titles used to detect languages and names, German headings recognised in
 bibliographies, and German spellings the parsers still accept when a model
 answers in German.
+
+## Interface languages
+
+The interface text is English in the code (`tr("Start research")`) and
+translated from catalogs in `src/ui/locales/` — the English text is the
+key, as with gettext:
+
+```toml
+[meta]
+name = "Deutsch"          # shown in the language switch
+
+[strings]
+"🔍 Start research" = "🔍 Recherche starten"
+"📥 Source {n}: {title}" = "📥 Quelle {n}: {title}"
+```
+
+```bash
+UI_LANGUAGES=en,de        # languages offered (default: all catalogs)
+DEFAULT_UI_LANGUAGE=de    # language of the start page (default: en)
+```
+
+- Every language is its own page: the default language at the root, the
+  others under `/<code>` (e.g. `/en`). The switch in the header links them;
+  the browser remembers the last choice and the start page forwards to it.
+- A missing entry shows the English text. Placeholders must match the
+  English key; a mismatch stops the start with a message naming the key.
+- Switching the language loads the other page: a chat stored in the browser
+  (with `BROWSER_STORAGE_SECRET` set) comes along, a running research stays
+  on the page where it was started.
+- `tests/test_ui_i18n.py` warns when a text in the code has no German entry
+  (it then shows in English) and fails when the catalog holds entries the
+  code no longer uses.
+
+The chat assistant's system prompt exists in both languages
+(`src/prompts/research.py`); the clickable action phrases are recognised
+in either language on every page.
+

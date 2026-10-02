@@ -31,6 +31,8 @@ import json
 import logging
 from typing import Any, Optional
 
+from src.ui.i18n import tr
+
 logger = logging.getLogger(__name__)
 
 # Maximum number of characters of chat history that go into the prompt.
@@ -208,15 +210,17 @@ def sanitize_suggestions(raw: Any, requirements: list) -> dict[str, str]:
 
 
 def _match_choice(value: str, choices) -> Optional[str]:
-    """Map a value (or its label) to an allowed stored value."""
+    """Map a value (or its label, also as shown in the interface) to an
+    allowed stored value."""
     pairs = [(c[0], c[1]) if isinstance(c, (tuple, list)) else (c, c)
              for c in choices]
     for label, val in pairs:
-        if value in (str(val), str(label)):
+        if value in (str(val), str(label), tr(str(label))):
             return str(val)
     low = value.casefold().strip()
     for label, val in pairs:
-        if low in (str(val).casefold().strip(), str(label).casefold().strip()):
+        if low in (str(val).casefold().strip(), str(label).casefold().strip(),
+                   tr(str(label)).casefold().strip()):
             return str(val)
     return None
 
@@ -280,7 +284,7 @@ async def suggest_preflight_values(
     conversation = format_conversation(chat_history, extra_text)
 
     if len(conversation) < MIN_CONVERSATION_CHARS:
-        return {}, (
+        return {}, tr(
             "Not enough conversation for a suggestion — "
             "describe your request in the chat first."
         )
@@ -293,18 +297,18 @@ async def suggest_preflight_values(
         )
     except Exception as e:
         logger.warning("Autofill call failed: %s", type(e).__name__)
-        return {}, f"Suggestion failed ({type(e).__name__})."
+        return {}, tr("Suggestion failed ({error}).", error=type(e).__name__)
 
     parsed = _parse_json(raw)
     if parsed is None:
         logger.warning("Autofill: answer was not JSON (%d characters)",
                        len(raw or ""))
-        return {}, "The suggestion could not be evaluated."
+        return {}, tr("The suggestion could not be evaluated.")
 
     values = sanitize_suggestions(parsed, requirements)
     if not values:
         return {}, (
-            "No field could be derived reliably from the conversation."
+            tr("No field could be derived reliably from the conversation.")
         )
 
     logger.info("Autofill: %d of %d fields suggested",

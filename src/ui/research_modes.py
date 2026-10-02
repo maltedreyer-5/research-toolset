@@ -80,8 +80,10 @@ def mode_choices(profile=None) -> list[tuple[str, str]]:
     """(label, id) pairs for the mode dropdown.
 
     The institution mode is offered only when an institution profile is
-    configured; its label carries the institution's short name.
+    configured; its label carries the institution's short name. Labels
+    are in the current interface language (src.ui.i18n).
     """
+    from src.ui.i18n import tr
     if profile is None:
         from src.institution import get_profile
         profile = get_profile()
@@ -90,6 +92,8 @@ def mode_choices(profile=None) -> list[tuple[str, str]]:
         if mode_id == "institution":
             if not profile.configured:
                 continue
-            label = label.replace("{institution}", profile.label)
+            label = tr(label, institution=profile.label)
+        else:
+            label = tr(label)
         out.append((label, mode_id))
     return out

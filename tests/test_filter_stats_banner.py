@@ -223,8 +223,8 @@ class TestDiagnosis(unittest.TestCase):
         out = format_filter_stats_banner(ctx)
         # The diagnosis section should be left out with "successful";
         # the header statistics already say so
-        self.assertNotIn("### ⚠️ Diagnose", out)
-        self.assertNotIn("### ℹ️ Diagnose", out)
+        self.assertNotIn("### ⚠️ Diagnosis", out)
+        self.assertNotIn("### ℹ️ Diagnosis", out)
 
     def test_problematic_diagnosis_with_recommendation(self):
         ctx = _MinimalCtx(
@@ -237,10 +237,10 @@ class TestDiagnosis(unittest.TestCase):
             },
         )
         out = format_filter_stats_banner(ctx)
-        self.assertIn("Diagnose", out)
+        self.assertIn("Diagnosis", out)
         self.assertIn("⚠️", out)
         self.assertIn("Alle Extrakte vom Filter", out)
-        self.assertIn("Empfehlung:", out)
+        self.assertIn("Recommendation:", out)
         self.assertIn("Personen-Filter", out)
 
 
@@ -342,7 +342,7 @@ class TestRealisticDgxScenario(unittest.TestCase):
         # Diagnosis: user_message is shown; the internal code
         # `filter_too_strict` is an implementation detail
         self.assertIn("vom Filter verworfen", out)
-        self.assertIn("Empfehlung:", out)
+        self.assertIn("Recommendation:", out)
 
 
 if __name__ == "__main__":

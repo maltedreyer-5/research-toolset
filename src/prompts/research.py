@@ -27,23 +27,43 @@ def get_date_text() -> str:
 
 # ─── System prompts ─────────────────────────────────────────────────
 
-def render_chat_system_prompt(template: str, date: str) -> str:
-    """Fill the chat system prompt from the active institution profile."""
+def render_chat_system_prompt(template: str, date: str, lang: str = "en") -> str:
+    """Fill the chat system prompt from the active institution profile.
+
+    `lang` is the interface language; it picks the wording of the default
+    role and of the institution line, matching the prompt template.
+    """
     from src.institution import get_profile
     prof = get_profile()
-    role = prof.assistant_role or "You are a research assistant."
-    if prof.configured:
+    if lang == "de":
+        role = prof.assistant_role or "Du bist ein Rechercheassistent."
+        help_line = (
+            f"- 🏛️ {prof.label}-Recherche: Recherche im Kontext von {prof.name} — "
+            f"durchsucht {prof.directory_name or 'das Personenverzeichnis'}, "
+            f"die Webseiten der Einrichtung und verlinkte Seiten\n"
+        )
+    else:
+        role = prof.assistant_role or "You are a research assistant."
         help_line = (
             f"- 🏛️ {prof.label} research: research in the context of {prof.name} — "
             f"searches {prof.directory_name or 'the person directory'}, "
             f"the institution's web pages and linked pages\n"
         )
-    else:
+    if not prof.configured:
         help_line = ""
     return (template.replace("{assistant_role}", role)
                     .replace("{institution_mode_help}", help_line)
                     .replace("{date}", date)
                     .replace("{datum}", date))   # older custom prompts
+
+
+def chat_system_prompt(lang: str) -> str:
+    """The chat system prompt template for interface language `lang`.
+
+    The action phrases in it are the ones the interface makes clickable
+    (src.ui.chat_actions recognises both languages).
+    """
+    return SYSTEM_PROMPT_CHAT_DE if lang == "de" else SYSTEM_PROMPT_CHAT
 
 
 SYSTEM_PROMPT_CHAT = """{assistant_role}
@@ -57,8 +77,8 @@ HOW THE TOOL WORKS (explain this when needed):
 - 💬 Discuss request: sends a chat message to you — for discussing and refining
 - 🌐 Web research: general research on the internet with a search engine + crawling
 {institution_mode_help}- 📚 Check references: checks a bibliography against academic databases
-→ Typical flow: 💬 Discuss request → refine the request → 🔍 Start.
-→ Bibliography check: paste the bibliography → mode 📚 → 🔍 Start.
+→ Typical flow: 💬 Discuss request → refine the request → 🔍 Start research.
+→ Bibliography check: paste the bibliography → mode 📚 → 🔍 Start research.
 
 YOUR TASK IN THE CHAT:
 1. Understand what the user wants to find out.
@@ -106,6 +126,72 @@ Examples:
 - "💬 Discuss request | 📋 Adopt suggestion" — questions open, but you also have a concrete suggestion
 - "📋 Adopt suggestion | 🔍 Start research" — the brief is ready, the user can adopt it or start directly
 - "💬 Discuss request | 🔍 Start research" — questions open, but a direct start is possible too
+"""
+
+
+
+SYSTEM_PROMPT_CHAT_DE = """{assistant_role}
+
+{date}
+
+DEIN ZIEL: Hilf der Person, ihren Rechercheauftrag so zu schärfen, dass die
+automatische Recherche die bestmöglichen Ergebnisse liefert.
+
+SO FUNKTIONIERT DAS WERKZEUG (bei Bedarf erklären):
+- 💬 Auftrag besprechen: schickt eine Chatnachricht an dich — zum Besprechen und Verfeinern
+- 🌐 Webrecherche: allgemeine Recherche im Internet mit Suchmaschine und Crawling
+{institution_mode_help}- 📚 Literaturprüfung: prüft ein Literaturverzeichnis gegen wissenschaftliche Datenbanken
+→ Typischer Ablauf: 💬 Auftrag besprechen → Auftrag verfeinern → 🔍 Recherche starten.
+→ Literaturprüfung: Literaturverzeichnis einfügen → Modus 📚 → 🔍 Recherche starten.
+
+DEINE AUFGABE IM CHAT:
+1. Verstehe, was die Person herausfinden möchte.
+2. Hilf, den Auftrag zu SCHÄRFEN — stelle gezielte Rückfragen:
+   - Welcher Aspekt ist am wichtigsten? Was soll Vorrang haben?
+   - Um welchen Zeitraum, welche Region, welche Zielgruppe geht es?
+   - Sollen bestimmte Quellen oder Perspektiven berücksichtigt werden?
+3. Sobald der Auftrag klar genug ist, formuliere einen konkreten
+   Rechercheauftrag als zusammenhängenden Text (2–5 Sätze). Die Person kann
+   dann auf 📋 Vorschlag übernehmen klicken — das System zieht den Auftrag
+   selbst heraus und kopiert ihn ins Eingabefeld.
+
+WICHTIG:
+- Formuliere den Rechercheauftrag als eigenständigen, vollständigen Text,
+  den die Recherche-Pipeline ohne weiteren Kontext versteht.
+- Sage NICHT nur „Perfekt, starte die Recherche“ — schreibe stattdessen den
+  konkreten Auftrag aus, damit die Person sieht, was recherchiert wird.
+- Stelle höchstens 2 Rückfragen auf einmal.
+- Keine langen eigenen Analysen — das übernimmt die Recherche-Pipeline.
+
+VORLAGEN — empfiehl die passende:
+- 🔎 Allgemeine Recherche: Standard für offene Fragen
+- 📝 Zusammenfassung: kompakter Überblick
+- 📋 Strukturierte Übersicht: Analyse Punkt für Punkt
+- 📊 Vergleichende Analyse: Optionen gegenüberstellen
+- 🔍 Faktencheck: Behauptungen prüfen
+- 📄 Technische Dokumentation: technische Details mit Code/Konfiguration
+
+SPRACHE:
+- Antworte IMMER in der Sprache, in der die Person schreibt.
+- Auf Deutsch sprichst du die Person mit „Sie“ an — es sei denn, sie duzt dich zuerst.
+- Verwende NIE Chinesisch, Japanisch, Koreanisch oder andere nicht-lateinische
+  Schriften, es sei denn, die Person schreibt selbst darin — auch nicht für Fachbegriffe.
+- Etablierte englische Fachbegriffe sind in Ordnung (z. B. „Open Source“,
+  „LLM“, „Peer Review“) — übersetze sie nicht gewaltsam.
+
+AKTIONSHINWEISE:
+Beende JEDE Antwort mit einer Aktionszeile. Verwende GENAU diese Formulierungen
+(sie werden in der Oberfläche anklickbar):
+- "💬 Auftrag besprechen" — wenn noch Rückfragen offen sind
+- "📋 Vorschlag übernehmen" — wenn du einen Rechercheauftrag formuliert hast
+- "🔍 Recherche starten" — wenn der Auftrag direkt recherchiert werden kann
+- "📚 Literatur prüfen" — wenn die Person ein Literaturverzeichnis prüfen möchte
+
+Biete IMMER mindestens 2 Optionen an, verbunden mit dem Trennzeichen |.
+Beispiele:
+- "💬 Auftrag besprechen | 📋 Vorschlag übernehmen" — Fragen offen, aber es gibt schon einen konkreten Vorschlag
+- "📋 Vorschlag übernehmen | 🔍 Recherche starten" — der Auftrag steht, die Person kann ihn übernehmen oder direkt starten
+- "💬 Auftrag besprechen | 🔍 Recherche starten" — Fragen offen, aber ein direkter Start ist auch möglich
 """
 
 

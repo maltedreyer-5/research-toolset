@@ -69,6 +69,15 @@ continues with the fallback.
 The start-up fails with a clear message if a language has no catalog or a
 catalog is inconsistent. See [output languages](output-languages.md).
 
+## Interface language
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `UI_LANGUAGES` | all catalogs | interface languages offered, e.g. `en,de`; catalogs live in `src/ui/locales/` |
+| `DEFAULT_UI_LANGUAGE` | `en` | language of the start page; must be in `UI_LANGUAGES`. The others are served under `/<code>` |
+
+See [interface languages](output-languages.md#interface-languages).
+
 ## Data and retention
 
 | Variable | Default | Meaning |

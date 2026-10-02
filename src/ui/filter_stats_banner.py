@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.ui.i18n import tr
+
 if TYPE_CHECKING:
     from src.pipeline.models import HarvestContext
 
@@ -59,10 +61,11 @@ def format_filter_stats_banner(ctx: "HarvestContext") -> str:
         return ""
 
     sections.append(
-        f"### 📊 Research statistics\n\n"
-        f"- **Rounds:** {n_rounds}\n"
-        f"- **Sources fetched:** {n_sources}\n"
-        f"- **Extracts obtained:** {n_extracts}"
+        tr("### 📊 Research statistics\n\n"
+           "- **Rounds:** {rounds}\n"
+           "- **Sources fetched:** {sources}\n"
+           "- **Extracts obtained:** {extracts}",
+           rounds=n_rounds, sources=n_sources, extracts=n_extracts)
     )
 
     # ── Filter losses ──
@@ -118,21 +121,23 @@ def _format_filter_losses(ctx: "HarvestContext") -> str:
         if agg["activated_in_rounds"] > 0 and agg["total"] > 0
     }
     if not active:
-        return "### 🛡️ Filters\n\n_No filters activated._"
+        return tr("### 🛡️ Filters\n\n_No filters activated._")
 
-    lines = ["### 🛡️ Filter statistics\n"]
+    lines = [tr("### 🛡️ Filter statistics\n")]
     for name, agg in sorted(active.items()):
         rejected = agg["rejected"]
         total = agg["total"]
         rate = rejected / total if total else 0.0
         marker = ""
         if rate >= CRITICAL_LOSS_RATE:
-            marker = " ⚠️ **CRITICAL**"
+            marker = " ⚠️ " + tr("**CRITICAL**")
         elif rate >= HIGH_LOSS_RATE:
             marker = " ⚠️"
         lines.append(
-            f"- **{name}:** {rejected}/{total} discarded "
-            f"({rate * 100:.0f}%){marker}"
+            f"- **{name}:** "
+            + tr("{rejected}/{total} discarded ({rate}%)", rejected=rejected,
+                 total=total, rate=f"{rate * 100:.0f}")
+            + marker
         )
 
     # If a filter loses critically much: append a notice block
@@ -140,10 +145,10 @@ def _format_filter_losses(ctx: "HarvestContext") -> str:
                 if a["total"] > 0 and a["rejected"] / a["total"] >= CRITICAL_LOSS_RATE]
     if critical:
         lines.append(
-            "\n> **Note:** filters with > 90% loss discarded almost all "
-            "extracts. If the report still looks empty, "
-            "a research run without this filter may give different results.\n"
-            f"> Affected: `{', '.join(sorted(critical))}`"
+            tr("\n> **Note:** filters with > 90% loss discarded almost all "
+               "extracts. If the report still looks empty, "
+               "a research run without this filter may give different results.\n"
+               "> Affected: `{filters}`", filters=', '.join(sorted(critical)))
         )
     return "\n".join(lines)
 
@@ -173,15 +178,19 @@ def _format_coverage(ctx: "HarvestContext") -> str:
         "answered": "✅", "partial": "🟡",
         "unanswered": "⛔", "filter_blocked": "🛡️",
     }
+    status_labels = {
+        "answered": tr("answered"), "partial": tr("partial"),
+        "unanswered": tr("unanswered"), "filter_blocked": tr("blocked by filter"),
+    }
     summary_parts = []
     for status, n in counts.items():
         if n > 0:
-            summary_parts.append(f"{icon_map[status]} {n} {status}")
+            summary_parts.append(f"{icon_map[status]} {n} {status_labels[status]}")
 
     if not summary_parts:
         return ""
 
-    lines = ["### 🎯 Coverage per question\n"]
+    lines = [tr("### 🎯 Coverage per question\n")]
     lines.append(" · ".join(summary_parts))
 
     # Details for unanswered or filter_blocked questions
@@ -219,13 +228,13 @@ def _format_diagnosis(ctx: "HarvestContext") -> str:
         return ""
 
     icon = "⚠️" if diag.get("is_problematic") else "ℹ️"
-    lines = [f"### {icon} Diagnose"]
+    lines = [f"### {icon} " + tr("Diagnosis")]
     msg = (diag.get("user_message") or "").strip()
     if msg:
         lines.append(f"\n{msg}")
     rem = (diag.get("remediation") or "").strip()
     if rem:
-        lines.append(f"\n**Empfehlung:** {rem}")
+        lines.append(tr("\n**Recommendation:** {text}", text=rem))
     return "\n".join(lines)
 
 
@@ -243,23 +252,25 @@ def _format_quality_and_fulfillment(ctx: "HarvestContext") -> str:
         assessment = quality.get("rating", "")
         if not quality.get("passed"):
             parts.append(
-                f"### 📝 Report quality\n\n"
-                f"⚠️ Rating: **{assessment}**, {n_issues} findings:\n"
+                tr("### 📝 Report quality\n\n"
+                   "⚠️ Rating: **{rating}**, {n} findings:\n",
+                   rating=assessment, n=n_issues)
             )
             for m in quality["issues"][:5]:  # show at most 5
                 art = m.get("art", "?")
                 besch = m.get("description", "")
                 parts.append(f"- _{art}:_ {besch}")
             if n_issues > 5:
-                parts.append(f"- _({n_issues - 5} more)_")
+                parts.append(tr("- _({n} more)_", n=n_issues - 5))
 
     if fulfillment and not fulfillment.get("fulfilled"):
         assessment = fulfillment.get("assessment", "")
         rework = fulfillment.get("rework", "")
-        block = ["### 🎯 Request fulfilment\n",
-                 f"⚠️ Request not completely fulfilled: {assessment}"]
+        block = [tr("### 🎯 Request fulfilment\n"),
+                 tr("⚠️ Request not completely fulfilled: {assessment}",
+                    assessment=assessment)]
         if rework:
-            block.append(f"\n**Suggestion:** {rework}")
+            block.append(tr("\n**Suggestion:** {text}", text=rework))
         parts.append("\n".join(block))
 
     return "\n\n".join(parts)

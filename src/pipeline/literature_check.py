@@ -18,6 +18,7 @@ from typing import Callable
 
 from src.about import TOOL_NAME, VERSION
 from src.institution import polite_user_agent
+from src.ui.i18n import tr
 from src.connectors.literature_apis import (
     LiteratureAPIClient, LiteratureEntry, LiteratureReport,
 )
@@ -186,7 +187,7 @@ class LiteratureChecker:
         # (_split_raw_entries → _join_entry_lines), so that URLs are not
         # destroyed globally.
         await progress_callback(
-            "status", "📖 Analysing the bibliography..."
+            "status", tr("📖 Analysing the bibliography...")
         )
         self._parse_error = ""
         entries = await self._parse_entries(raw_text)
@@ -198,7 +199,7 @@ class LiteratureChecker:
                 LiteratureReport(),
             )
 
-        await progress_callback("status", f"📖 {len(entries)} entries recognised")
+        await progress_callback("status", tr("📖 {n} entries recognised", n=len(entries)))
         logger.info(f"Literature check: {len(entries)} entries parsed")
 
         if self._stop_requested:
@@ -207,7 +208,7 @@ class LiteratureChecker:
         # ═══ Stage 2: API lookup ════════════════════════════════════
         await progress_callback(
             "status",
-            f"🔍 Checking {len(entries)} entries in 5 databases..."
+            tr("🔍 Checking {n} entries in 5 databases...", n=len(entries))
         )
 
         for i, entry in enumerate(entries):
@@ -216,7 +217,7 @@ class LiteratureChecker:
 
             await progress_callback(
                 "status",
-                f"🔍 [{i+1}/{len(entries)}] Checking: "
+                f"🔍 [{i+1}/{len(entries)}] " + tr("Checking:") + " "
                 f"{str(entry.authors[0]) if entry.authors else '?'} "
                 f"({entry.year}) — {entry.title[:50]}..."
             )
@@ -276,7 +277,7 @@ class LiteratureChecker:
             await asyncio.sleep(0.05)  # only for UI responsiveness
 
         # ═══ Stage 3: field comparison ═══════════════════════════════
-        await progress_callback("status", "📊 Comparing fields...")
+        await progress_callback("status", tr("📊 Comparing fields..."))
 
         for entry in entries:
             if entry.api_matches:
@@ -330,7 +331,7 @@ class LiteratureChecker:
         if url_candidates:
             await progress_callback(
                 "status",
-                f"🔗 Checking {len(url_candidates)} URLs directly..."
+                tr("🔗 Checking {n} URLs directly...", n=len(url_candidates))
             )
             await self._verify_urls(url_candidates, progress_callback)
 
@@ -339,12 +340,12 @@ class LiteratureChecker:
         if not_found and self.searxng:
             await progress_callback(
                 "status",
-                f"🌐 Web search for {len(not_found)} entries not found..."
+                tr("🌐 Web search for {n} entries not found...", n=len(not_found))
             )
             await self._web_search_unfound(not_found, progress_callback)
 
         # ═══ Stage 4b: metrics & duplicates ══════════════════════════
-        await progress_callback("status", "📊 Extracting metrics...")
+        await progress_callback("status", tr("📊 Extracting metrics..."))
 
         # Take citation counts from the API matches
         for entry in entries:
@@ -361,7 +362,7 @@ class LiteratureChecker:
         duplicates = self._detect_duplicates(entries)
 
         # ═══ Stage 5: report ══════════════════════════════════════
-        await progress_callback("status", "✍️ Writing the check report...")
+        await progress_callback("status", tr("✍️ Writing the check report..."))
 
         # Finalise statistics
         self.stats["entries_total"] = len(entries)
@@ -895,7 +896,7 @@ class LiteratureChecker:
 
                 await progress_callback(
                     "status",
-                    f"🔗 Checking URL: {url[:60]}..."
+                    tr("🔗 Checking URL: {url}...", url=url[:60])
                 )
 
                 try:
@@ -1146,7 +1147,7 @@ class LiteratureChecker:
             if progress_callback:
                 await progress_callback(
                     "status",
-                    f"✍️ Writing report [{i+1}/{len(entries)}]: "
+                    tr("✍️ Writing report [{i}/{n}]: ", i=i + 1, n=len(entries)) +
                     f"{str(entry.authors[0]) if entry.authors else '?'} "
                     f"({entry.year})..."
                 )
